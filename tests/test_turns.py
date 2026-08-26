@@ -2220,3 +2220,705 @@ def test_robber_avoids_blocking_own_city_when_opponent_target_exists():
     )
 
     assert target == 1
+
+
+def test_action_dev_card_can_be_played_after_normal_action():
+    from catanlab.board import Board
+    from catanlab.devcard_policy import (
+        DevCardDecision,
+        DevCardPhase,
+    )
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class InterleavingAgent(TurnAgent):
+        def __init__(self):
+            self.dev_calls = 0
+            self.actions = [
+                TurnAction(
+                    action_type=(
+                        ActionType.MARITIME_TRADE
+                    ),
+                    give_resource=Resource.WOOD,
+                    receive_resource=Resource.BRICK,
+                ),
+                TurnAction(
+                    action_type=ActionType.PASS
+                ),
+            ]
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            self.dev_calls += 1
+
+            # Decline:
+            #   1. pre-roll
+            #   2. immediate post-roll
+            #
+            # Play Monopoly at the next opportunity,
+            # which occurs after the maritime trade.
+            if self.dev_calls < 3:
+                return DevCardDecision(
+                    card=None,
+                    utility=0.0,
+                )
+
+            return DevCardDecision(
+                card=DevCardType.MONOPOLY,
+                utility=10.0,
+                resource=Resource.ORE,
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+        ):
+            return self.actions.pop(0)
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.MONOPOLY.value
+        ],
+    )
+
+    opponent = PlayerState(
+        player_id=1
+    )
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    # Ordinary 4:1 maritime trade.
+    inventories[0].add(
+        Resource.WOOD,
+        4,
+    )
+
+    # Monopoly will collect these after the
+    # maritime trade has executed.
+    inventories[1].add(
+        Resource.ORE,
+        3,
+    )
+
+    agent = InterleavingAgent()
+
+    result = run_turn(
+        board,
+        [
+            player,
+            opponent,
+        ],
+        inventories,
+        [
+            agent,
+            TurnAgent(),
+        ],
+        player_id=0,
+        roll=2,
+    )
+
+    # The normal action happened first.
+    assert (
+        inventories[0].count(
+            Resource.WOOD
+        )
+        == 0
+    )
+
+    assert (
+        inventories[0].count(
+            Resource.BRICK
+        )
+        == 1
+    )
+
+    # Then Monopoly was played between normal
+    # actions and transferred all opponent ore.
+    assert (
+        inventories[0].count(
+            Resource.ORE
+        )
+        == 3
+    )
+
+    assert (
+        inventories[1].count(
+            Resource.ORE
+        )
+        == 0
+    )
+
+    assert (
+        DevCardType.MONOPOLY.value
+        not in player.dev_cards
+    )
+
+    # Pre-roll, immediate post-roll, and the
+    # post-maritime-trade opportunity.
+    assert agent.dev_calls == 3
+
+    assert result.actions == (
+        TurnAction(
+            action_type=(
+                ActionType.MARITIME_TRADE
+            ),
+            give_resource=Resource.WOOD,
+            receive_resource=Resource.BRICK,
+        ),
+        TurnAction(
+            action_type=ActionType.PASS
+        ),
+    )
+
+
+def test_only_one_action_dev_card_can_be_played_with_interleaving():
+    from catanlab.board import Board
+    from catanlab.devcard_policy import DevCardDecision
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class OneDevOnlyAgent(TurnAgent):
+        def __init__(self):
+            self.dev_calls = 0
+            self.actions = [
+                TurnAction(
+                    action_type=(
+                        ActionType.MARITIME_TRADE
+                    ),
+                    give_resource=Resource.WOOD,
+                    receive_resource=Resource.BRICK,
+                ),
+                TurnAction(
+                    action_type=ActionType.PASS
+                ),
+            ]
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            self.dev_calls += 1
+
+            # Play Monopoly immediately pre-roll.
+            return DevCardDecision(
+                card=DevCardType.MONOPOLY,
+                utility=10.0,
+                resource=Resource.ORE,
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+        ):
+            return self.actions.pop(0)
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.MONOPOLY.value,
+            DevCardType.KNIGHT.value,
+        ],
+    )
+
+    opponent = PlayerState(
+        player_id=1
+    )
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(
+        Resource.WOOD,
+        4,
+    )
+
+    inventories[1].add(
+        Resource.ORE,
+        2,
+    )
+
+    agent = OneDevOnlyAgent()
+
+    run_turn(
+        board,
+        [
+            player,
+            opponent,
+        ],
+        inventories,
+        [
+            agent,
+            TurnAgent(),
+        ],
+        player_id=0,
+        roll=2,
+    )
+
+    # Monopoly was played.
+    assert (
+        inventories[0].count(
+            Resource.ORE
+        )
+        == 2
+    )
+
+    assert (
+        DevCardType.MONOPOLY.value
+        not in player.dev_cards
+    )
+
+    # Knight remains untouched because no second
+    # action development card may be played.
+    assert (
+        DevCardType.KNIGHT.value
+        in player.dev_cards
+    )
+
+    # Once the pre-roll card succeeds, later
+    # post-roll/interleaved opportunities are
+    # suppressed entirely.
+    assert agent.dev_calls == 1
+
+
+def test_run_turn_stops_immediately_after_reaching_ten_vp():
+    """
+    Reaching 10 VP during a normal action should end
+    the active player's turn immediately.
+
+    In particular, the agent must not be asked to
+    choose another normal action after the winning
+    build.
+    """
+
+    class WinningCityAgent(
+        GreedyBuildAgent
+    ):
+        def __init__(self):
+            self.action_calls = 0
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+            bank=None,
+        ):
+            self.action_calls += 1
+
+            if self.action_calls == 1:
+                return TurnAction(
+                    action_type=(
+                        ActionType.BUILD_CITY
+                    ),
+                    vertex_id=0,
+                )
+
+            # This should never be reached.
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=i,
+                position=(float(i), 0.0),
+            )
+            for i in range(6)
+        ],
+        edges=[],
+    )
+
+    # 3 cities = 6 VP
+    # 3 settlements = 3 VP
+    # Total before the turn = 9 VP.
+    player = PlayerState(
+        player_id=0,
+        settlements=[
+            0,
+            1,
+            2,
+        ],
+        cities=[
+            3,
+            4,
+            5,
+        ],
+    )
+
+    assert player.victory_points == 9
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+
+    inventory.add(
+        Resource.ORE,
+        3,
+    )
+
+    agent = WinningCityAgent()
+
+    result = run_turn(
+        board,
+        [player],
+        [inventory],
+        [agent],
+        player_id=0,
+        roll=2,
+    )
+
+    # Upgrading one settlement to a city adds
+    # exactly one net victory point.
+    assert player.victory_points == 10
+
+    assert player.settlements == [
+        1,
+        2,
+    ]
+
+    assert 0 in player.cities
+
+    # Most importantly, no second normal action was
+    # requested after the winning build.
+    assert agent.action_calls == 1
+
+    assert len(
+        result.actions
+    ) == 1
+
+    assert (
+        result.actions[0].action_type
+        == ActionType.BUILD_CITY
+    )
+
+
+def test_run_turn_stops_after_longest_road_reaches_ten_vp():
+    """
+    Acquiring Longest Road during a turn should
+    immediately count toward victory.
+
+    A player at 8 VP who builds their fifth
+    consecutive road reaches 10 VP and must not be
+    asked for another normal action.
+    """
+
+    class WinningRoadAgent(
+        GreedyBuildAgent
+    ):
+        def __init__(self):
+            self.action_calls = 0
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+            bank=None,
+        ):
+            self.action_calls += 1
+
+            if self.action_calls == 1:
+                return TurnAction(
+                    action_type=(
+                        ActionType.BUILD_ROAD
+                    ),
+                    edge=(4, 5),
+                )
+
+            # Victory should prevent this call.
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=i,
+                position=(float(i), 0.0),
+                neighbors=(
+                    [1]
+                    if i == 0
+                    else (
+                        [4]
+                        if i == 5
+                        else (
+                            [
+                                i - 1,
+                                i + 1,
+                            ]
+                            if 1 <= i <= 4
+                            else []
+                        )
+                    )
+                ),
+            )
+            for i in range(13)
+        ],
+        edges=[
+            Edge(
+                vertex_a=i,
+                vertex_b=i + 1,
+            )
+            for i in range(5)
+        ],
+    )
+
+    # Four cities = 8 VP.
+    #
+    # The existing four-road chain is one road short
+    # of Longest Road.
+    player = PlayerState(
+        player_id=0,
+        cities=[
+            0,
+            10,
+            11,
+            12,
+        ],
+        roads=[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+        ],
+    )
+
+    assert player.victory_points == 8
+    assert not player.has_longest_road
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.WOOD,
+        1,
+    )
+
+    inventory.add(
+        Resource.BRICK,
+        1,
+    )
+
+    agent = WinningRoadAgent()
+
+    result = run_turn(
+        board,
+        [player],
+        [inventory],
+        [agent],
+        player_id=0,
+        roll=2,
+    )
+
+    assert (4, 5) in player.roads
+
+    assert player.has_longest_road
+
+    assert player.victory_points == 10
+
+    # No second normal action may occur after
+    # Longest Road creates the winning score.
+    assert agent.action_calls == 1
+
+    assert len(
+        result.actions
+    ) == 1
+
+    assert (
+        result.actions[0].action_type
+        == ActionType.BUILD_ROAD
+    )
+
+
+def test_buying_victory_point_card_can_win_immediately():
+    """
+    A Victory Point development card counts toward
+    victory immediately when purchased.
+
+    The normal same-turn restriction on newly bought
+    action development cards must not delay the VP.
+    """
+
+    from catanlab.devcards import (
+        DevCardDeck,
+        DevCardType,
+    )
+
+    class WinningDevCardAgent(
+        GreedyBuildAgent
+    ):
+        def __init__(self):
+            self.action_calls = 0
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+            bank=None,
+        ):
+            self.action_calls += 1
+
+            if self.action_calls == 1:
+                return TurnAction(
+                    action_type=(
+                        ActionType.BUY_DEV_CARD
+                    )
+                )
+
+            # The VP card should end the turn before
+            # another normal action is requested.
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=i,
+                position=(float(i), 0.0),
+            )
+            for i in range(6)
+        ],
+        edges=[],
+    )
+
+    # 3 cities = 6 VP
+    # 3 settlements = 3 VP
+    # Total = 9 VP.
+    player = PlayerState(
+        player_id=0,
+        settlements=[
+            0,
+            1,
+            2,
+        ],
+        cities=[
+            3,
+            4,
+            5,
+        ],
+    )
+
+    assert player.victory_points == 9
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.SHEEP,
+        1,
+    )
+    inventory.add(
+        Resource.WHEAT,
+        1,
+    )
+    inventory.add(
+        Resource.ORE,
+        1,
+    )
+
+    # Force the purchased card to be a VP card.
+    deck = DevCardDeck(
+        cards=[
+            DevCardType.VICTORY_POINT,
+        ]
+    )
+
+    agent = WinningDevCardAgent()
+
+    result = run_turn(
+        board,
+        [player],
+        [inventory],
+        [agent],
+        player_id=0,
+        roll=2,
+        dev_deck=deck,
+    )
+
+    assert (
+        DevCardType.VICTORY_POINT.value
+        in player.dev_cards
+    )
+
+    # It may still be marked as newly purchased,
+    # which is fine; VP scoring is immediate.
+    assert (
+        DevCardType.VICTORY_POINT.value
+        in player.new_dev_cards
+    )
+
+    assert player.victory_points == 10
+
+    assert agent.action_calls == 1
+
+    assert len(
+        result.actions
+    ) == 1
+
+    assert (
+        result.actions[0].action_type
+        == ActionType.BUY_DEV_CARD
+    )

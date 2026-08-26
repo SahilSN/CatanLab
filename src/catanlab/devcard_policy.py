@@ -93,9 +93,21 @@ def knight_utility(
 
 def monopoly_utility(
     player,
+    players,
     inventories,
     phase: DevCardPhase,
+    board=None,
 ) -> tuple[float, Resource | None]:
+    """
+    Estimate the value of playing Monopoly using
+    public information only.
+
+    Opponent resource identities are hidden. The
+    heuristic therefore estimates likely holdings
+    from each opponent's visible production profile
+    and publicly known resource-card count.
+    """
+
     if not has_playable_dev_card(
         player,
         DevCardType.MONOPOLY,
@@ -105,28 +117,122 @@ def monopoly_utility(
             None,
         )
 
-    best_resource = None
-    best_total = 0
-
-    for resource in (
+    resources = (
         Resource.WOOD,
         Resource.BRICK,
         Resource.SHEEP,
         Resource.WHEAT,
         Resource.ORE,
-    ):
-        total = sum(
-            inventory.count(resource)
-            for player_id, inventory
-            in enumerate(inventories)
-            if player_id != player.player_id
+    )
+
+    estimated_totals = {
+        resource: 0.0
+        for resource in resources
+    }
+
+    if board is not None:
+        from catanlab.scoring import (
+            resource_production,
         )
 
-        if total > best_total:
-            best_total = total
-            best_resource = resource
+        for other in players:
+            if (
+                other.player_id
+                == player.player_id
+            ):
+                continue
 
-    if best_resource is None:
+            # Opponent hand size is public, but its
+            # resource composition is not.
+            hand_size = inventories[
+                other.player_id
+            ].total()
+
+            if hand_size <= 0:
+                continue
+
+            production = {
+                resource: 0.0
+                for resource in resources
+            }
+
+            for vertex_id in other.settlements:
+                vertex_production = (
+                    resource_production(
+                        board,
+                        board.vertices[
+                            vertex_id
+                        ],
+                    )
+                )
+
+                for resource in resources:
+                    production[
+                        resource
+                    ] += vertex_production[
+                        resource
+                    ]
+
+            for vertex_id in other.cities:
+                vertex_production = (
+                    resource_production(
+                        board,
+                        board.vertices[
+                            vertex_id
+                        ],
+                    )
+                )
+
+                # Cities produce twice as much as
+                # settlements.
+                for resource in resources:
+                    production[
+                        resource
+                    ] += (
+                        2
+                        * vertex_production[
+                            resource
+                        ]
+                    )
+
+            total_production = sum(
+                production.values()
+            )
+
+            if total_production <= 0:
+                continue
+
+            # Estimate how the opponent's public hand
+            # might be distributed according to their
+            # visible production profile.
+            for resource in resources:
+                estimated_totals[
+                    resource
+                ] += (
+                    hand_size
+                    * production[
+                        resource
+                    ]
+                    / total_production
+                )
+
+    best_resource = max(
+        resources,
+        key=lambda resource: (
+            estimated_totals[
+                resource
+            ],
+            resource.value,
+        ),
+    )
+
+    best_total = estimated_totals[
+        best_resource
+    ]
+
+    # Without meaningful public evidence, hold the
+    # card rather than guessing blindly.
+    if best_total <= 0:
         return (
             0.0,
             None,
@@ -136,13 +242,9 @@ def monopoly_utility(
         best_total
     )
 
-    # Before rolling, cards gained through Monopoly
-    # immediately become part of the player's hand.
-    # If that pushes the player above seven cards,
-    # rolling a seven creates discard exposure.
-    #
-    # Post-roll there is no further dice roll this
-    # turn, so that immediate risk disappears.
+    # Before rolling, estimated Monopoly gains become
+    # part of the player's hand and may increase
+    # discard exposure if a seven is rolled.
     if phase == DevCardPhase.PRE_ROLL:
         own_inventory = inventories[
             player.player_id
@@ -252,6 +354,7 @@ def choose_dev_card_play(
     inventories,
     phase: DevCardPhase = DevCardPhase.POST_ROLL,
     strategy=None,
+    board=None,
 ) -> DevCardDecision:
     """
     Choose the highest-value development card
@@ -269,8 +372,10 @@ def choose_dev_card_play(
     monopoly, monopoly_resource = (
         monopoly_utility(
             player,
+            players,
             inventories,
             phase,
+            board=board,
         )
     )
 

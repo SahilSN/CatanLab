@@ -151,33 +151,20 @@ def inventory_has_bundle(
     )
 
 
-def validate_trade_offer(
+def validate_trade_terms(
     offer: TradeOffer,
-    inventories: list[PlayerInventory],
 ) -> bool:
     """
-    Validate only hard trade legality.
+    Validate the public structure of a domestic
+    trade offer.
 
-    Strategic willingness is handled by the agents.
+    This intentionally does not inspect either
+    player's hidden resource inventory.
     """
 
     if (
         offer.proposer_id
         == offer.recipient_id
-    ):
-        return False
-
-    if not (
-        0
-        <= offer.proposer_id
-        < len(inventories)
-    ):
-        return False
-
-    if not (
-        0
-        <= offer.recipient_id
-        < len(inventories)
     ):
         return False
 
@@ -207,6 +194,42 @@ def validate_trade_offer(
     if (
         give_resources
         & receive_resources
+    ):
+        return False
+
+    return True
+
+
+def validate_trade_offer(
+    offer: TradeOffer,
+    inventories: list[PlayerInventory],
+) -> bool:
+    """
+    Validate complete trade feasibility.
+
+    Unlike validate_trade_terms(), this function
+    checks the players' actual private inventories
+    and should therefore be used by the game engine
+    or by a player evaluating their own participation,
+    not to discover an opponent's hidden hand.
+    """
+
+    if not validate_trade_terms(
+        offer
+    ):
+        return False
+
+    if not (
+        0
+        <= offer.proposer_id
+        < len(inventories)
+    ):
+        return False
+
+    if not (
+        0
+        <= offer.recipient_id
+        < len(inventories)
     ):
         return False
 
@@ -410,3 +433,34 @@ def generate_trade_bundles(
     )
 
     return bundles
+
+
+def generate_trade_request_bundles(
+    max_cards: int = 4,
+    max_types: int = 3,
+) -> list[ResourceBundle]:
+    """
+    Generate possible resource bundles that a player
+    may request without inspecting another player's
+    hidden hand.
+
+    Unlike generate_trade_bundles(), these bundles
+    represent hypothetical requests rather than
+    resources known to be held by a player.
+    """
+
+    hypothetical_inventory = (
+        PlayerInventory()
+    )
+
+    for resource in PRODUCING_RESOURCES:
+        hypothetical_inventory.add(
+            resource,
+            max_cards,
+        )
+
+    return generate_trade_bundles(
+        hypothetical_inventory,
+        max_cards=max_cards,
+        max_types=max_types,
+    )

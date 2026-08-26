@@ -219,3 +219,65 @@ def test_game_preserves_internal_seeds():
         result.dev_seed
         == expected_dev_seed
     )
+
+
+def test_public_victory_points_hide_vp_dev_cards():
+    from catanlab.simulation import PlayerState
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[1, 2],
+        cities=[3],
+        dev_cards=[
+            "victory_point",
+            "victory_point",
+        ],
+        has_largest_army=True,
+    )
+
+    # 2 settlements + city worth 2 + Largest Army.
+    assert player.public_victory_points == 6
+
+    # Two hidden VP cards count toward the true score.
+    assert player.victory_points == 8
+
+
+def test_public_victory_points_include_public_awards():
+    from catanlab.simulation import PlayerState
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[1],
+        cities=[2],
+        has_largest_army=True,
+        has_longest_road=True,
+    )
+
+    assert player.public_victory_points == 7
+    assert player.victory_points == 7
+
+
+def test_hidden_vp_cards_still_count_for_winning():
+    from catanlab.game import winner
+    from catanlab.simulation import PlayerState
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[1, 2],
+        cities=[3, 4],
+        dev_cards=[
+            "victory_point",
+            "victory_point",
+        ],
+        has_longest_road=True,
+    )
+
+    # Public:
+    # 2 settlements + 2 cities * 2 + LR = 8
+    assert player.public_victory_points == 8
+
+    # True:
+    # 8 public + 2 hidden VP = 10
+    assert player.victory_points == 10
+
+    assert winner([player]) == 0

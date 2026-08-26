@@ -35,11 +35,13 @@ class PlayerState:
     has_longest_road: bool = False
 
     @property
-    def victory_points(self) -> int:
-        dev_vp = sum(
-            card == "victory_point"
-            for card in self.dev_cards
-        )
+    def public_victory_points(self) -> int:
+        """
+        Victory points visible to other players.
+
+        Hidden victory-point development cards are
+        intentionally excluded.
+        """
 
         largest_army_vp = (
             2
@@ -56,9 +58,28 @@ class PlayerState:
         return (
             len(self.settlements)
             + 2 * len(self.cities)
-            + dev_vp
             + largest_army_vp
             + longest_road_vp
+        )
+
+    @property
+    def victory_points(self) -> int:
+        """
+        Player's true victory-point total.
+
+        Includes hidden victory-point development
+        cards and is therefore suitable for win
+        detection and the player's own reasoning.
+        """
+
+        dev_vp = sum(
+            card == "victory_point"
+            for card in self.dev_cards
+        )
+
+        return (
+            self.public_victory_points
+            + dev_vp
         )
 
 

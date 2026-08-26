@@ -1128,3 +1128,58 @@ def test_newly_bought_road_building_is_not_playable():
         )
 
     assert player.roads == []
+
+
+def test_road_building_can_place_only_one_legal_road():
+    from catanlab.board import (
+        Board,
+        Edge,
+        Vertex,
+    )
+    from catanlab.devcards import (
+        play_road_building,
+    )
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+            ),
+        ],
+        edges=[
+            Edge(
+                vertex_a=0,
+                vertex_b=1,
+            ),
+        ],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+        dev_cards=[
+            DevCardType.ROAD_BUILDING.value,
+        ],
+    )
+
+    play_road_building(
+        player,
+        board,
+        [player],
+        first_edge=(0, 1),
+    )
+
+    assert player.roads == [
+        (0, 1),
+    ]
+
+    assert (
+        DevCardType.ROAD_BUILDING.value
+        not in player.dev_cards
+    )

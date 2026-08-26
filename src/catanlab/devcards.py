@@ -622,15 +622,16 @@ def play_road_building(
     board,
     players,
     first_edge: tuple[int, int],
-    second_edge: tuple[int, int],
+    second_edge: tuple[int, int] | None = None,
 ) -> None:
     """
-    Play Road Building and place two free roads.
+    Play Road Building and place up to two free roads.
 
-    The first road may extend the player's
-    network and make the second road legal.
+    Roads are placed sequentially because the first
+    road may extend the player's network and make the
+    second road legal.
 
-    If either placement fails, the player's road
+    If a supplied placement fails, the player's road
     state is restored and the card is not spent.
     """
 
@@ -662,13 +663,14 @@ def play_road_building(
             first_edge[1],
         )
 
-        build_road_free(
-            board,
-            players,
-            player,
-            second_edge[0],
-            second_edge[1],
-        )
+        if second_edge is not None:
+            build_road_free(
+                board,
+                players,
+                player,
+                second_edge[0],
+                second_edge[1],
+            )
 
     except ValueError:
         player.roads = original_roads

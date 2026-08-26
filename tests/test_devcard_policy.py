@@ -44,12 +44,29 @@ def test_knight_prioritized_near_largest_army_win():
     )
 
 
-def test_monopoly_targets_most_common_opponent_resource():
+def test_monopoly_targets_strongest_public_production_signal():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.graph import HexCoord
+
     player = PlayerState(
         player_id=0,
         dev_cards=[
             DevCardType.MONOPOLY.value,
         ],
+    )
+
+    opponent_1 = PlayerState(
+        player_id=1,
+        settlements=[0],
+    )
+
+    opponent_2 = PlayerState(
+        player_id=2,
+        settlements=[1],
     )
 
     inventories = [
@@ -58,33 +75,56 @@ def test_monopoly_targets_most_common_opponent_resource():
         PlayerInventory(),
     ]
 
+    # Only the public hand size matters now.
     inventories[1].add(
-        Resource.ORE,
-        3,
+        Resource.WOOD,
+        4,
     )
 
     inventories[2].add(
-        Resource.ORE,
-        2,
+        Resource.BRICK,
+        3,
     )
 
-    inventories[1].add(
-        Resource.WOOD,
-        1,
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.WOOD,
+                number=3,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[0, 1],
+            ),
+        ],
+        edges=[],
     )
 
     decision = choose_dev_card_play(
         player,
         [
             player,
-            PlayerState(
-                player_id=1
-            ),
-            PlayerState(
-                player_id=2
-            ),
+            opponent_1,
+            opponent_2,
         ],
         inventories,
+        board=board,
     )
 
     assert (
@@ -200,9 +240,15 @@ def test_monopoly_can_be_held_pre_roll_due_to_seven_risk():
 
 
 def test_same_monopoly_is_attractive_post_roll():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
     from catanlab.devcard_policy import (
         DevCardPhase,
     )
+    from catanlab.graph import HexCoord
 
     player = PlayerState(
         player_id=0,
@@ -213,6 +259,7 @@ def test_same_monopoly_is_attractive_post_roll():
 
     opponent = PlayerState(
         player_id=1,
+        settlements=[0],
     )
 
     inventories = [
@@ -225,9 +272,30 @@ def test_same_monopoly_is_attractive_post_roll():
         6,
     )
 
+    # Exact composition is hidden; total card count
+    # is what the heuristic uses.
     inventories[1].add(
-        Resource.ORE,
+        Resource.WOOD,
         4,
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+        ],
+        edges=[],
     )
 
     decision = choose_dev_card_play(
@@ -238,6 +306,7 @@ def test_same_monopoly_is_attractive_post_roll():
         ],
         inventories,
         phase=DevCardPhase.POST_ROLL,
+        board=board,
     )
 
     assert (
@@ -252,9 +321,15 @@ def test_same_monopoly_is_attractive_post_roll():
 
 
 def test_pre_roll_and_post_roll_can_make_different_decisions():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
     from catanlab.devcard_policy import (
         DevCardPhase,
     )
+    from catanlab.graph import HexCoord
 
     player = PlayerState(
         player_id=0,
@@ -265,6 +340,7 @@ def test_pre_roll_and_post_roll_can_make_different_decisions():
 
     opponent = PlayerState(
         player_id=1,
+        settlements=[0],
     )
 
     inventories = [
@@ -278,8 +354,27 @@ def test_pre_roll_and_post_roll_can_make_different_decisions():
     )
 
     inventories[1].add(
-        Resource.ORE,
+        Resource.BRICK,
         4,
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+        ],
+        edges=[],
     )
 
     pre_roll = choose_dev_card_play(
@@ -290,6 +385,7 @@ def test_pre_roll_and_post_roll_can_make_different_decisions():
         ],
         inventories,
         phase=DevCardPhase.PRE_ROLL,
+        board=board,
     )
 
     post_roll = choose_dev_card_play(
@@ -300,6 +396,7 @@ def test_pre_roll_and_post_roll_can_make_different_decisions():
         ],
         inventories,
         phase=DevCardPhase.POST_ROLL,
+        board=board,
     )
 
     assert pre_roll.card is None
@@ -307,6 +404,11 @@ def test_pre_roll_and_post_roll_can_make_different_decisions():
     assert (
         post_roll.card
         == DevCardType.MONOPOLY
+    )
+
+    assert (
+        post_roll.resource
+        == Resource.ORE
     )
 
 
@@ -443,3 +545,97 @@ def test_road_strategy_can_still_hold_early_knight():
     )
 
     assert decision.card is None
+
+
+def test_monopoly_decision_ignores_hidden_resource_identity():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.graph import HexCoord
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.MONOPOLY.value,
+        ],
+    )
+
+    opponent = PlayerState(
+        player_id=1,
+        settlements=[0],
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+        ],
+        edges=[],
+    )
+
+    inventories_a = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories_b = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    # Same public hand size, completely different
+    # hidden resource identities.
+    inventories_a[1].add(
+        Resource.ORE,
+        4,
+    )
+
+    inventories_b[1].add(
+        Resource.WOOD,
+        4,
+    )
+
+    decision_a = choose_dev_card_play(
+        player,
+        [
+            player,
+            opponent,
+        ],
+        inventories_a,
+        board=board,
+    )
+
+    decision_b = choose_dev_card_play(
+        player,
+        [
+            player,
+            opponent,
+        ],
+        inventories_b,
+        board=board,
+    )
+
+    assert decision_a == decision_b
+
+    assert (
+        decision_a.card
+        == DevCardType.MONOPOLY
+    )
+
+    assert (
+        decision_a.resource
+        == Resource.ORE
+    )

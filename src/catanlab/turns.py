@@ -626,8 +626,12 @@ def _road_building_edges(
     player: PlayerState,
 ):
     """
-    Choose two legal free roads that maximize
-    resulting Longest Road length.
+    Choose up to two legal free roads.
+
+    Prefer a two-road sequence that maximizes the
+    resulting Longest Road length. If only one road
+    can legally be placed, return the best single
+    road instead of making Road Building unusable.
     """
 
     from catanlab.longest_road import (
@@ -640,8 +644,14 @@ def _road_building_edges(
         player,
     )
 
+    if not first_edges:
+        return None
+
     best_pair = None
-    best_length = -1
+    best_pair_length = -1
+
+    best_single = None
+    best_single_length = -1
 
     for first in first_edges:
         player.roads.append(
@@ -649,6 +659,30 @@ def _road_building_edges(
         )
 
         try:
+            single_length = (
+                longest_road_length(
+                    player,
+                    players,
+                )
+            )
+
+            if (
+                single_length
+                > best_single_length
+                or (
+                    single_length
+                    == best_single_length
+                    and (
+                        best_single is None
+                        or first < best_single
+                    )
+                )
+            ):
+                best_single_length = (
+                    single_length
+                )
+                best_single = first
+
             second_edges = legal_road_edges(
                 board,
                 players,
@@ -676,22 +710,31 @@ def _road_building_edges(
                 )
 
                 if (
-                    length > best_length
+                    length > best_pair_length
                     or (
-                        length == best_length
+                        length
+                        == best_pair_length
                         and (
                             best_pair is None
                             or pair < best_pair
                         )
                     )
                 ):
-                    best_length = length
+                    best_pair_length = length
                     best_pair = pair
 
         finally:
             player.roads.pop()
 
-    return best_pair
+    if best_pair is not None:
+        return best_pair
+
+    if best_single is not None:
+        return (
+            best_single,
+        )
+
+    return None
 
 
 def _knight_target_tile(
@@ -811,7 +854,7 @@ def _knight_target_tile(
             threat_multiplier = (
                 1.0
                 + 0.15
-                * other.victory_points
+                * other.public_victory_points
             )
 
             opponent_block_score += (
@@ -830,7 +873,7 @@ def _knight_target_tile(
                 > 0
             ):
                 victim_vp = (
-                    other.victory_points
+                    other.public_victory_points
                 )
 
                 strongest_victim_vp = max(
@@ -935,7 +978,7 @@ def _choose_robber_victim(
         ].total()
 
         return (
-            victim.victory_points,
+            victim.public_victory_points,
             min(
                 hand_size,
                 7,
@@ -1038,7 +1081,11 @@ def _execute_dev_card_decision(
             board,
             players,
             edges[0],
-            edges[1],
+            (
+                edges[1]
+                if len(edges) > 1
+                else None
+            ),
         )
 
         return True
@@ -1403,30 +1450,140 @@ def run_turn(
 
     played_action_dev_card = False
 
-    # ------------------------------------------------
-    # PRE-ROLL development-card opportunity.
-    # ------------------------------------------------
+    def active_player_has_won() -> bool:
+        """
+        Recompute public awards and determine whether
+        the active player has reached the standard
+        10-point victory threshold.
 
-    pre_roll_decision = (
-        agent.choose_dev_card_play(
+        Victory in Catan is recognized on the active
+        player's own turn, so only this player is
+        checked here.
+        """
+
+        from catanlab.devcards import (
+            update_largest_army,
+        )
+        from catanlab.longest_road import (
+            update_longest_road,
+        )
+
+        update_largest_army(
+            players
+        )
+
+        update_longest_road(
+            players
+        )
+
+        return (
+            player.victory_points
+            >= 10
+        )
+
+    def try_action_dev_card(
+        phase,
+    ) -> bool:
+        """
+        Give the active player one development-card
+        opportunity.
+
+        Once an action development card has been
+        played this turn, later opportunities are
+        automatically suppressed.
+        """
+
+        nonlocal played_action_dev_card
+
+        if played_action_dev_card:
+            return False
+
+        decision = agent.choose_dev_card_play(
             board,
             players,
             player,
             inventories,
-            DevCardPhase.PRE_ROLL,
+            phase,
         )
+
+        if not _execute_dev_card_decision(
+            board,
+            players,
+            inventories,
+            player,
+            decision,
+            rng,
+            bank=bank,
+        ):
+            return False
+
+        played_action_dev_card = True
+
+        # Knight can change Largest Army, and Road
+        # Building can change Longest Road.
+        active_player_has_won()
+
+        return True
+
+    # ------------------------------------------------
+    # PRE-ROLL development-card opportunity.
+    # ------------------------------------------------
+
+    if active_player_has_won():
+        actions.append(
+            TurnAction(
+                action_type=ActionType.PASS
+            )
+        )
+
+        return TurnResult(
+            player_id=player_id,
+            roll=roll,
+            action=actions[-1],
+            actions=tuple(
+                actions
+            ),
+            discards=discards,
+            player_trades=tuple(
+                player_trades
+            ),
+            trade_offer_count=(
+                trade_offer_count
+            ),
+            trade_sequence_count=(
+                trade_sequence_count
+            ),
+        )
+
+    try_action_dev_card(
+        DevCardPhase.PRE_ROLL
     )
 
-    if _execute_dev_card_decision(
-        board,
-        players,
-        inventories,
-        player,
-        pre_roll_decision,
-        rng,
-        bank=bank,
-    ):
-        played_action_dev_card = True
+    if active_player_has_won():
+        actions.append(
+            TurnAction(
+                action_type=ActionType.PASS
+            )
+        )
+
+        return TurnResult(
+            player_id=player_id,
+            roll=roll,
+            action=actions[-1],
+            actions=tuple(
+                actions
+            ),
+            discards=discards,
+            player_trades=tuple(
+                player_trades
+            ),
+            trade_offer_count=(
+                trade_offer_count
+            ),
+            trade_sequence_count=(
+                trade_sequence_count
+            ),
+        )
 
     # ------------------------------------------------
     # Dice roll.
@@ -1582,27 +1739,9 @@ def run_turn(
     # already played before rolling.
     # ------------------------------------------------
 
-    if not played_action_dev_card:
-        post_roll_decision = (
-            agent.choose_dev_card_play(
-                board,
-                players,
-                player,
-                inventories,
-                DevCardPhase.POST_ROLL,
-            )
-        )
-
-        if _execute_dev_card_decision(
-            board,
-            players,
-            inventories,
-            player,
-            post_roll_decision,
-            rng,
-            bank=bank,
-        ):
-            played_action_dev_card = True
+    try_action_dev_card(
+        DevCardPhase.POST_ROLL
+    )
 
     # ------------------------------------------------
     # Normal build / purchase action.
@@ -1691,6 +1830,13 @@ def run_turn(
                 # negotiation may again make sense.
                 last_failed_trade_state = None
 
+                # Development cards may be played
+                # between other actions during the
+                # player's turn.
+                try_action_dev_card(
+                    DevCardPhase.POST_ROLL
+                )
+
             elif offers_made > 0:
                 # Do not immediately reopen bargaining
                 # from the exact same state.
@@ -1727,6 +1873,20 @@ def run_turn(
             dev_deck=dev_deck,
             bank=bank,
         )
+
+        # Building can change VP directly and roads
+        # or settlements can alter Longest Road.
+        if active_player_has_won():
+            break
+
+        # A legal action development card may be
+        # played between normal turn actions.
+        try_action_dev_card(
+            DevCardPhase.POST_ROLL
+        )
+
+        if active_player_has_won():
+            break
 
     else:
         raise RuntimeError(
@@ -1797,6 +1957,7 @@ class AdaptiveStrategyAgent(TurnAgent):
             inventories,
             phase=phase,
             strategy=self.strategy,
+            board=board,
         )
 
     def _build_resource_progress(
@@ -2054,7 +2215,8 @@ class AdaptiveStrategyAgent(TurnAgent):
             TradeOffer,
             bundle_size,
             generate_trade_bundles,
-            validate_trade_offer,
+            generate_trade_request_bundles,
+            validate_trade_terms,
         )
 
         if excluded_recipients is None:
@@ -2201,13 +2363,12 @@ class AdaptiveStrategyAgent(TurnAgent):
                 ):
                     continue
 
-                other_inventory = inventories[
-                    other.player_id
-                ]
-
+                # Requests are generated without
+                # inspecting the recipient's hidden hand.
+                # The recipient may later reject an offer
+                # they cannot actually satisfy.
                 receive_bundles = (
-                    generate_trade_bundles(
-                        other_inventory,
+                    generate_trade_request_bundles(
                         max_cards=4,
                         max_types=3,
                     )
@@ -2328,9 +2489,8 @@ class AdaptiveStrategyAgent(TurnAgent):
                             receive=receive,
                         )
 
-                        if not validate_trade_offer(
-                            offer,
-                            inventories,
+                        if not validate_trade_terms(
+                            offer
                         ):
                             continue
 
@@ -2418,68 +2578,36 @@ class AdaptiveStrategyAgent(TurnAgent):
                         # accepted when the actual
                         # negotiation evaluates the same
                         # unchanged offer.
-                        recipient_ratio = 1.0
+                        # The proposer cannot inspect
+                        # the recipient's hidden hand to
+                        # predict their exact valuation.
+                        #
+                        # Use only the publicly visible card
+                        # quantities as a rough bargaining
+                        # heuristic.
+                        receive_cards = bundle_size(
+                            offer.receive
+                        )
 
-                        if agents is not None:
-                            recipient_agent = agents[
-                                other.player_id
-                            ]
-
-                            # A player at 9 visible VP is
-                            # already rejected by adaptive
-                            # recipients, so avoid starting
-                            # a pointless negotiation.
-                            if (
-                                player.victory_points
-                                >= 9
-                            ):
-                                continue
-
-                            if (
-                                hasattr(
-                                    recipient_agent,
-                                    "_trade_bundle_value",
+                        if receive_cards > 0:
+                            recipient_ratio = (
+                                bundle_size(
+                                    offer.give
                                 )
-                            ):
-                                recipient_inventory = (
-                                    inventories[
-                                        other.player_id
-                                    ]
-                                )
+                                / receive_cards
+                            )
+                        else:
+                            recipient_ratio = 1.0
 
-                                recipient_incoming = (
-                                    recipient_agent
-                                    ._trade_bundle_value(
-                                        offer.give,
-                                        recipient_inventory,
-                                    )
-                                )
-
-                                recipient_outgoing = (
-                                    recipient_agent
-                                    ._trade_bundle_value(
-                                        offer.receive,
-                                        recipient_inventory,
-                                    )
-                                )
-
-                                if recipient_outgoing > 0:
-                                    recipient_ratio = (
-                                        recipient_incoming
-                                        / recipient_outgoing
-                                    )
-                                elif recipient_incoming > 0:
-                                    recipient_ratio = 2.0
-                                else:
-                                    recipient_ratio = 1.0
-
-                                # Offers below this point are
-                                # sufficiently unfavorable
-                                # that a rational recipient
-                                # would be unlikely even to
-                                # bargain over them.
-                                if recipient_ratio < 0.85:
-                                    continue
+                        # A player at 9 visible VP is already
+                        # rejected by adaptive recipients, so
+                        # avoid starting a pointless
+                        # negotiation.
+                        if (
+                            player.public_victory_points
+                            >= 9
+                        ):
+                            continue
 
                         deficit_progress = sum(
                             min(
@@ -2633,7 +2761,7 @@ class AdaptiveStrategyAgent(TurnAgent):
 
         # Do not voluntarily help an opponent who is
         # already one visible point from victory.
-        if proposer.victory_points >= 9:
+        if proposer.public_victory_points >= 9:
             return False
 
         inventory = inventories[
@@ -2881,7 +3009,8 @@ class AdaptiveStrategyAgent(TurnAgent):
             TradeOffer,
             bundle_size,
             generate_trade_bundles,
-            validate_trade_offer,
+            generate_trade_request_bundles,
+            validate_trade_terms,
         )
 
         if (
@@ -2895,10 +3024,6 @@ class AdaptiveStrategyAgent(TurnAgent):
 
         inventory = inventories[
             player.player_id
-        ]
-
-        other_inventory = inventories[
-            offer.proposer_id
         ]
 
         # A counteroffer reverses perspective:
@@ -2923,8 +3048,7 @@ class AdaptiveStrategyAgent(TurnAgent):
         )
 
         incoming_bundles = (
-            generate_trade_bundles(
-                other_inventory,
+            generate_trade_request_bundles(
                 max_cards=4,
                 max_types=3,
             )
@@ -3036,9 +3160,8 @@ class AdaptiveStrategyAgent(TurnAgent):
                 ):
                     continue
 
-                if not validate_trade_offer(
-                    candidate,
-                    inventories,
+                if not validate_trade_terms(
+                    candidate
                 ):
                     continue
 
