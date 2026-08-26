@@ -19,6 +19,7 @@ from catanlab.devcards import (
 from catanlab.economy import (
     BuildType,
     PlayerInventory,
+    ResourceBank,
     produce_for_roll,
 )
 from catanlab.resources import Resource
@@ -146,6 +147,42 @@ class TurnAgent:
         raise NotImplementedError
 
 
+    def choose_discards(
+        self,
+        player,
+        inventory: PlayerInventory,
+        count: int,
+    ) -> list[Resource]:
+        """
+        Default deterministic discard policy for
+        simple agents.
+        """
+
+        discarded = []
+
+        for resource in (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        ):
+            take = min(
+                count - len(discarded),
+                inventory.count(
+                    resource
+                ),
+            )
+
+            discarded.extend(
+                [resource] * take
+            )
+
+            if len(discarded) >= count:
+                break
+
+        return discarded
+
     def propose_player_trade(
         self,
         board,
@@ -153,6 +190,7 @@ class TurnAgent:
         player,
         inventories,
         excluded_recipients=None,
+        agents=None,
     ):
         """
         Return a TradeOffer or None.
@@ -340,6 +378,7 @@ def execute_action(
     inventory: PlayerInventory,
     action: TurnAction,
     dev_deck: DevCardDeck | None = None,
+    bank: ResourceBank | None = None,
 ) -> None:
     if (
         action.action_type
@@ -370,6 +409,7 @@ def execute_action(
             inventory,
             give=action.give_resource,
             receive=action.receive_resource,
+            bank=bank,
         )
 
         return
@@ -387,6 +427,7 @@ def execute_action(
             player,
             inventory,
             action.vertex_id,
+            bank=bank,
         )
 
         return
@@ -417,6 +458,7 @@ def execute_action(
             player,
             inventory,
             action.vertex_id,
+            bank=bank,
         )
 
         return
@@ -439,6 +481,7 @@ def execute_action(
             inventory,
             a,
             b,
+            bank=bank,
         )
 
         return
@@ -456,6 +499,7 @@ def execute_action(
             player,
             inventory,
             dev_deck,
+            bank=bank,
         )
 
         return
@@ -468,12 +512,16 @@ def execute_action(
 
 def _year_of_plenty_resources(
     inventory: PlayerInventory,
-):
+    bank: ResourceBank | None = None,
+) -> tuple[Resource, Resource] | None:
     """
     Pick two useful resources for Year of Plenty.
 
-    For now, prefer deficits toward city,
-    settlement, dev card, then road.
+    Prefer deficits toward city, settlement,
+    development card, then road.
+
+    When a finite bank is supplied, only cards
+    actually available from the bank are eligible.
     """
 
     from catanlab.economy import (
@@ -490,13 +538,27 @@ def _year_of_plenty_resources(
         BuildType.ROAD,
     )
 
+    resources = (
+        Resource.WOOD,
+        Resource.BRICK,
+        Resource.SHEEP,
+        Resource.WHEAT,
+        Resource.ORE,
+    )
+
+    # Build an ordered preference list. Repeating a
+    # resource represents wanting multiple copies.
+    preferred: list[Resource] = []
+
     for build_type in priorities:
-        missing = []
+        cost = BUILD_COSTS[
+            build_type
+        ]
+
+        missing: list[Resource] = []
 
         for resource, required in (
-            BUILD_COSTS[
-                build_type
-            ].items()
+            cost.items()
         ):
             deficit = max(
                 0,
@@ -510,22 +572,53 @@ def _year_of_plenty_resources(
                 [resource] * deficit
             )
 
-        if 1 <= len(missing) <= 2:
-            if len(missing) == 1:
-                missing.append(
-                    missing[0]
-                )
-
-            return (
-                missing[0],
-                missing[1],
+        if missing:
+            preferred.extend(
+                missing
             )
 
-    return (
-        Resource.WHEAT,
-        Resource.ORE,
+    # Fall back to all resource types so YOP can
+    # still be played when no immediate build
+    # deficit exists.
+    preferred.extend(
+        resources
     )
 
+    chosen: list[Resource] = []
+    reserved = {}
+
+    for resource in preferred:
+        already_reserved = reserved.get(
+            resource,
+            0,
+        )
+
+        if bank is not None:
+            if not bank.can_supply(
+                resource,
+                already_reserved + 1,
+            ):
+                continue
+
+        chosen.append(
+            resource
+        )
+
+        reserved[resource] = (
+            already_reserved + 1
+        )
+
+        if len(chosen) == 2:
+            return (
+                chosen[0],
+                chosen[1],
+            )
+
+    # With a finite bank, fewer than two resource
+    # cards may exist in total. Do not burn the
+    # development card if its effect cannot be
+    # completed.
+    return None
 
 def _road_building_edges(
     board: Board,
@@ -608,15 +701,21 @@ def _knight_target_tile(
     player: PlayerState,
 ):
     """
-    Choose a robber destination.
+    Choose a strategic robber destination.
 
-    Prefer tiles adjacent to opponents with more
-    cards, then stronger production numbers.
+    The robber primarily aims to suppress valuable
+    opponent production while avoiding the active
+    player's own production.
+
+    Additional preference is given to:
+    - stronger opponents,
+    - tiles with a stealable adjacent opponent,
+    - cities over settlements.
+
+    The same logic is used for both rolling a 7 and
+    playing a Knight.
     """
 
-    from catanlab.devcards import (
-        players_adjacent_to_tile,
-    )
     from catanlab.dice import (
         production_weight,
     )
@@ -630,28 +729,147 @@ def _knight_target_tile(
     if not candidates:
         return None
 
-    def score(tile):
-        victims = players_adjacent_to_tile(
-            board,
-            players,
-            tile.id,
-            exclude_player_id=(
-                player.player_id
-            ),
+    def buildings_on_tile(
+        other_player,
+        tile_id,
+    ):
+        settlement_count = sum(
+            1
+            for vertex_id
+            in other_player.settlements
+            if tile_id
+            in board.vertices[
+                vertex_id
+            ].adjacent_tiles
         )
 
-        opponent_cards = sum(
-            inventories[
-                victim_id
-            ].total()
-            for victim_id in victims
+        city_count = sum(
+            1
+            for vertex_id
+            in other_player.cities
+            if tile_id
+            in board.vertices[
+                vertex_id
+            ].adjacent_tiles
         )
 
         return (
-            opponent_cards,
+            settlement_count,
+            city_count,
+        )
+
+    def score(tile):
+        number_weight = (
             production_weight(
                 tile.number
-            ),
+            )
+            if tile.number is not None
+            else 0.0
+        )
+
+        opponent_block_score = 0.0
+        self_block_score = 0.0
+
+        steal_score = 0.0
+        strongest_victim_vp = 0
+
+        for other in players:
+            (
+                settlement_count,
+                city_count,
+            ) = buildings_on_tile(
+                other,
+                tile.id,
+            )
+
+            # Cities lose twice as much production
+            # from a blocked tile as settlements.
+            production_units = (
+                settlement_count
+                + 2 * city_count
+            )
+
+            if production_units == 0:
+                continue
+
+            blocked_value = (
+                production_units
+                * number_weight
+            )
+
+            if (
+                other.player_id
+                == player.player_id
+            ):
+                self_block_score += (
+                    blocked_value
+                )
+                continue
+
+            # Players closer to winning are more
+            # important robber targets.
+            threat_multiplier = (
+                1.0
+                + 0.15
+                * other.victory_points
+            )
+
+            opponent_block_score += (
+                blocked_value
+                * threat_multiplier
+            )
+
+            # Hand size should not scale the robber
+            # value linearly: only one random card can
+            # actually be stolen. Having at least one
+            # card creates the steal opportunity.
+            if (
+                inventories[
+                    other.player_id
+                ].total()
+                > 0
+            ):
+                victim_vp = (
+                    other.victory_points
+                )
+
+                strongest_victim_vp = max(
+                    strongest_victim_vp,
+                    victim_vp,
+                )
+
+                steal_score = max(
+                    steal_score,
+                    1.0
+                    + 0.10
+                    * min(
+                        inventories[
+                            other.player_id
+                        ].total(),
+                        7,
+                    )
+                    + 0.15
+                    * victim_vp,
+                )
+
+        # Blocking your own production should be
+        # meaningfully worse than an equally valuable
+        # amount of opponent disruption.
+        total_score = (
+            opponent_block_score
+            - 1.50
+            * self_block_score
+            + 0.75
+            * steal_score
+        )
+
+        return (
+            total_score,
+            opponent_block_score,
+            -self_block_score,
+            steal_score,
+            strongest_victim_vp,
+            number_weight,
             -tile.id,
         )
 
@@ -661,6 +879,75 @@ def _knight_target_tile(
     ).id
 
 
+
+
+def _choose_robber_victim(
+    board: Board,
+    players: list[PlayerState],
+    inventories: list[PlayerInventory],
+    thief: PlayerState,
+):
+    """
+    Choose which adjacent opponent to rob.
+
+    Prefer:
+    - opponents closer to victory,
+    - opponents with larger hands.
+
+    Hand size matters only moderately because exactly
+    one random resource will be stolen.
+    """
+
+    from catanlab.devcards import (
+        players_adjacent_to_tile,
+    )
+
+    if board.robber_tile_id is None:
+        return None
+
+    adjacent = players_adjacent_to_tile(
+        board,
+        players,
+        board.robber_tile_id,
+        exclude_player_id=(
+            thief.player_id
+        ),
+    )
+
+    eligible = [
+        victim_id
+        for victim_id in adjacent
+        if inventories[
+            victim_id
+        ].total() > 0
+    ]
+
+    if not eligible:
+        return None
+
+    def victim_score(victim_id):
+        victim = players[
+            victim_id
+        ]
+
+        hand_size = inventories[
+            victim_id
+        ].total()
+
+        return (
+            victim.victory_points,
+            min(
+                hand_size,
+                7,
+            ),
+            -victim_id,
+        )
+
+    return max(
+        eligible,
+        key=victim_score,
+    )
+
 def _execute_dev_card_decision(
     board: Board,
     players: list[PlayerState],
@@ -668,6 +955,7 @@ def _execute_dev_card_decision(
     player: PlayerState,
     decision,
     rng: random.Random,
+    bank: ResourceBank | None = None,
 ) -> bool:
     """
     Execute one action development-card decision.
@@ -704,12 +992,20 @@ def _execute_dev_card_decision(
         decision.card
         == DevCardType.YEAR_OF_PLENTY
     ):
-        resource_a, resource_b = (
+        resources = (
             _year_of_plenty_resources(
                 inventories[
                     player.player_id
-                ]
+                ],
+                bank=bank,
             )
+        )
+
+        if resources is None:
+            return False
+
+        resource_a, resource_b = (
+            resources
         )
 
         play_year_of_plenty(
@@ -719,6 +1015,7 @@ def _execute_dev_card_decision(
             ],
             resource_a,
             resource_b,
+            bank=bank,
         )
 
         return True
@@ -767,12 +1064,22 @@ def _execute_dev_card_decision(
             players
         )
 
+        victim_id = (
+            _choose_robber_victim(
+                board,
+                players,
+                inventories,
+                player,
+            )
+        )
+
         rob_adjacent_player(
             board,
             players,
             inventories,
             thief_id=player.player_id,
             rng=rng,
+            victim_id=victim_id,
         )
 
         return True
@@ -787,6 +1094,7 @@ def _choose_normal_action(
     player: PlayerState,
     inventory: PlayerInventory,
     dev_deck: DevCardDeck | None,
+    bank: ResourceBank | None = None,
 ) -> TurnAction:
     """
     Call an agent's normal-action policy.
@@ -803,25 +1111,79 @@ def _choose_normal_action(
         agent.choose_action
     ).parameters
 
+    kwargs = {}
+
     if "dev_deck" in parameters:
-        return agent.choose_action(
-            board,
-            players,
-            player,
-            inventory,
-            dev_deck=dev_deck,
-        )
+        kwargs[
+            "dev_deck"
+        ] = dev_deck
+
+    if "bank" in parameters:
+        kwargs[
+            "bank"
+        ] = bank
 
     return agent.choose_action(
         board,
         players,
         player,
         inventory,
+        **kwargs,
     )
 
 
 MAX_TRADE_OFFERS_PER_SEQUENCE = 4
 MAX_TRADE_OFFERS_PER_TURN = 12
+MAX_TRADE_SEQUENCES_PER_TURN = 3
+
+
+def _trade_state_signature(
+    player,
+    inventory,
+):
+    """
+    Capture the parts of the active player's state
+    that matter for whether reopening negotiation
+    makes sense.
+
+    A failed negotiation should not immediately be
+    repeated unless this state changes.
+    """
+
+    resources = (
+        Resource.WOOD,
+        Resource.BRICK,
+        Resource.SHEEP,
+        Resource.WHEAT,
+        Resource.ORE,
+    )
+
+    return (
+        tuple(
+            inventory.count(
+                resource
+            )
+            for resource in resources
+        ),
+        tuple(
+            sorted(
+                player.settlements
+            )
+        ),
+        tuple(
+            sorted(
+                player.cities
+            )
+        ),
+        tuple(
+            sorted(
+                player.roads
+            )
+        ),
+        len(
+            player.dev_cards
+        ),
+    )
 
 
 def _run_trade_sequence(
@@ -948,14 +1310,28 @@ def _run_one_domestic_trade_sequence(
             0,
         )
 
-    initial_offer = (
-        agent.propose_player_trade(
-            board,
-            players,
-            player,
-            inventories,
+    try:
+        initial_offer = (
+            agent.propose_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                agents=agents,
+            )
         )
-    )
+    except TypeError:
+        # Backward compatibility for simple custom
+        # test/baseline agents implementing the older
+        # proposal signature.
+        initial_offer = (
+            agent.propose_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+            )
+        )
 
     if initial_offer is None:
         return (
@@ -991,6 +1367,7 @@ def run_turn(
     roll: int,
     dev_deck: DevCardDeck | None = None,
     rng: random.Random | None = None,
+    bank: ResourceBank | None = None,
 ) -> TurnResult:
     """
     Execute one simplified Catan turn.
@@ -1047,6 +1424,7 @@ def run_turn(
         player,
         pre_roll_decision,
         rng,
+        bank=bank,
     ):
         played_action_dev_card = True
 
@@ -1060,15 +1438,94 @@ def run_turn(
         for pid, other_inventory in enumerate(
             inventories
         ):
-            discarded = discard_for_seven(
-                other_inventory,
-                rng,
+            # Standard Catan rule:
+            # only players holding more than 7
+            # resource cards discard, and they
+            # discard half rounded down.
+            if other_inventory.total() <= 7:
+                continue
+
+            discard_count = (
+                other_inventory.total()
+                // 2
             )
 
-            if discarded:
-                discards[
+            discarded = agents[
+                pid
+            ].choose_discards(
+                players[
                     pid
-                ] = discarded
+                ],
+                other_inventory,
+                discard_count,
+            )
+
+            # Defensive validation: an agent must
+            # return exactly the required number of
+            # resource cards and cannot discard cards
+            # it does not actually hold.
+            if (
+                len(discarded)
+                != discard_count
+            ):
+                raise ValueError(
+                    "Agent returned an invalid "
+                    "number of discard cards: "
+                    f"player={pid}, "
+                    f"required={discard_count}, "
+                    f"returned={len(discarded)}"
+                )
+
+            requested = {}
+
+            for resource in discarded:
+                requested[
+                    resource
+                ] = (
+                    requested.get(
+                        resource,
+                        0,
+                    )
+                    + 1
+                )
+
+            for resource, amount in (
+                requested.items()
+            ):
+                if (
+                    other_inventory.count(
+                        resource
+                    )
+                    < amount
+                ):
+                    raise ValueError(
+                        "Agent attempted to discard "
+                        "resources it does not hold: "
+                        f"player={pid}, "
+                        f"resource={resource}, "
+                        f"requested={amount}, "
+                        "held="
+                        f"{other_inventory.count(resource)}"
+                    )
+
+            # Validate the full choice before
+            # mutating the inventory, then remove
+            # the selected cards.
+            for resource in discarded:
+                other_inventory.remove(
+                    resource,
+                    1,
+                )
+
+                if bank is not None:
+                    bank.add(
+                        resource,
+                        1,
+                    )
+
+            discards[
+                pid
+            ] = discarded
 
         # After all required discards, the active
         # player must move the robber and may steal
@@ -1091,12 +1548,22 @@ def run_turn(
                 robber_target,
             )
 
+            victim_id = (
+                _choose_robber_victim(
+                    board,
+                    players,
+                    inventories,
+                    player,
+                )
+            )
+
             rob_adjacent_player(
                 board,
                 players,
                 inventories,
                 thief_id=player.player_id,
                 rng=rng,
+                victim_id=victim_id,
             )
 
     else:
@@ -1105,6 +1572,7 @@ def run_turn(
             players,
             inventories,
             roll,
+            bank=bank,
         )
 
     # ------------------------------------------------
@@ -1132,6 +1600,7 @@ def run_turn(
             player,
             post_roll_decision,
             rng,
+            bank=bank,
         ):
             played_action_dev_card = True
 
@@ -1145,6 +1614,8 @@ def run_turn(
 
     trade_offer_count = 0
     trade_sequence_count = 0
+
+    last_failed_trade_state = None
 
     actions: list[TurnAction] = []
 
@@ -1166,10 +1637,27 @@ def run_turn(
         # sequences remains capped for the whole turn.
         # --------------------------------------------
 
-        if (
+        current_trade_state = (
+            _trade_state_signature(
+                player,
+                inventory,
+            )
+        )
+
+        may_negotiate = (
             trade_offer_count
             < MAX_TRADE_OFFERS_PER_TURN
-        ):
+            and trade_sequence_count
+            < MAX_TRADE_SEQUENCES_PER_TURN
+            and (
+                last_failed_trade_state
+                is None
+                or current_trade_state
+                != last_failed_trade_state
+            )
+        )
+
+        if may_negotiate:
             remaining_trade_budget = (
                 MAX_TRADE_OFFERS_PER_TURN
                 - trade_offer_count
@@ -1199,6 +1687,17 @@ def run_turn(
                     accepted_trade
                 )
 
+                # The hand changed, so future
+                # negotiation may again make sense.
+                last_failed_trade_state = None
+
+            elif offers_made > 0:
+                # Do not immediately reopen bargaining
+                # from the exact same state.
+                last_failed_trade_state = (
+                    current_trade_state
+                )
+
         action = _choose_normal_action(
             agent,
             board,
@@ -1206,6 +1705,7 @@ def run_turn(
             player,
             inventory,
             dev_deck,
+            bank=bank,
         )
 
         actions.append(
@@ -1225,6 +1725,7 @@ def run_turn(
             inventory,
             action,
             dev_deck=dev_deck,
+            bank=bank,
         )
 
     else:
@@ -1298,6 +1799,231 @@ class AdaptiveStrategyAgent(TurnAgent):
             strategy=self.strategy,
         )
 
+    def _build_resource_progress(
+        self,
+        inventory: PlayerInventory,
+        build_type: BuildType,
+    ) -> float:
+        """
+        Return the fraction of a build's resource
+        cost currently satisfied.
+
+        Each required card counts independently.
+
+        Example:
+            settlement requires 4 cards total.
+            Holding wood + brick gives 0.50.
+        """
+
+        from catanlab.economy import (
+            BUILD_COSTS,
+        )
+
+        cost = BUILD_COSTS[
+            build_type
+        ]
+
+        total_required = sum(
+            cost.values()
+        )
+
+        if total_required <= 0:
+            return 1.0
+
+        satisfied = sum(
+            min(
+                inventory.count(
+                    resource
+                ),
+                required,
+            )
+            for resource, required
+            in cost.items()
+        )
+
+        return (
+            satisfied
+            / total_required
+        )
+
+    def _missing_build_cards(
+        self,
+        inventory: PlayerInventory,
+        build_type: BuildType,
+    ) -> int:
+        """
+        Number of resource cards still missing for
+        the given build.
+        """
+
+        from catanlab.economy import (
+            BUILD_COSTS,
+        )
+
+        cost = BUILD_COSTS[
+            build_type
+        ]
+
+        return sum(
+            max(
+                0,
+                required
+                - inventory.count(
+                    resource
+                ),
+            )
+            for resource, required
+            in cost.items()
+        )
+
+    def _discard_resource_value(
+        self,
+        resource: Resource,
+        inventory: PlayerInventory,
+    ) -> float:
+        """
+        Strategic value of retaining one card of this
+        resource during a discard.
+
+        Higher means we would rather keep it.
+        """
+
+        from catanlab.economy import (
+            BUILD_COSTS,
+        )
+
+        value = (
+            self.profile.resource_weights.get(
+                resource,
+                0.0,
+            )
+        )
+
+        for build_type in (
+            BuildType.CITY,
+            BuildType.SETTLEMENT,
+            BuildType.DEV_CARD,
+            BuildType.ROAD,
+        ):
+            required = BUILD_COSTS[
+                build_type
+            ].get(
+                resource,
+                0,
+            )
+
+            if required <= 0:
+                continue
+
+            held = inventory.count(
+                resource
+            )
+
+            # Preserve cards that are still part of a
+            # currently incomplete build requirement.
+            if held <= required:
+                value += 0.75
+
+        return value
+
+    def choose_discards(
+        self,
+        player,
+        inventory: PlayerInventory,
+        count: int,
+    ) -> list[Resource]:
+        """
+        Choose which resource cards to discard after
+        rolling a 7.
+
+        Re-evaluate the strategic value of the
+        remaining hand after every discarded card.
+        """
+
+        if count <= 0:
+            return []
+
+        from catanlab.economy import (
+            PlayerInventory,
+        )
+
+        remaining_inventory = (
+            PlayerInventory()
+        )
+
+        for resource in (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        ):
+            amount = inventory.count(
+                resource
+            )
+
+            if amount:
+                remaining_inventory.add(
+                    resource,
+                    amount,
+                )
+
+        discarded = []
+
+        for _ in range(count):
+            candidates = [
+                resource
+                for resource in (
+                    Resource.WOOD,
+                    Resource.BRICK,
+                    Resource.SHEEP,
+                    Resource.WHEAT,
+                    Resource.ORE,
+                )
+                if (
+                    remaining_inventory.count(
+                        resource
+                    )
+                    > 0
+                )
+            ]
+
+            if not candidates:
+                break
+
+            def discard_key(resource):
+                return (
+                    self._discard_resource_value(
+                        resource,
+                        remaining_inventory,
+                    ),
+
+                    # Among equally valuable cards,
+                    # prefer shedding from the largest
+                    # remaining pile.
+                    -remaining_inventory.count(
+                        resource
+                    ),
+
+                    resource.value,
+                )
+
+            resource = min(
+                candidates,
+                key=discard_key,
+            )
+
+            discarded.append(
+                resource
+            )
+
+            remaining_inventory.remove(
+                resource,
+                1,
+            )
+
+        return discarded
+
     def propose_player_trade(
         self,
         board,
@@ -1305,6 +2031,7 @@ class AdaptiveStrategyAgent(TurnAgent):
         player,
         inventories,
         excluded_recipients=None,
+        agents=None,
     ):
         """
         Generate a strategic initial domestic trade
@@ -1428,6 +2155,24 @@ class AdaptiveStrategyAgent(TurnAgent):
             # The proposal should help fill an actual
             # deficit toward a strategically useful
             # build.
+            missing_cards = (
+                self._missing_build_cards(
+                    inventory,
+                    build_type,
+                )
+            )
+
+            # Domestic trading is primarily a
+            # near-term completion tool. Do not
+            # negotiate for a build we can already
+            # afford, or one that is still several
+            # cards away.
+            if missing_cards == 0:
+                continue
+
+            if missing_cards > 1:
+                continue
+
             deficits = {
                 resource:
                     required
@@ -1589,6 +2334,153 @@ class AdaptiveStrategyAgent(TurnAgent):
                         ):
                             continue
 
+                        # --------------------------------
+                        # Concrete build-progress test.
+                        #
+                        # Domestic trading should happen
+                        # because it materially advances a
+                        # plan, not merely because the
+                        # incoming cards have a higher
+                        # abstract valuation.
+                        # --------------------------------
+
+                        before_progress = (
+                            self._build_resource_progress(
+                                inventory,
+                                build_type,
+                            )
+                        )
+
+                        from catanlab.economy import (
+                            PlayerInventory,
+                        )
+
+                        simulated = PlayerInventory()
+
+                        for resource in (
+                            Resource.WOOD,
+                            Resource.BRICK,
+                            Resource.SHEEP,
+                            Resource.WHEAT,
+                            Resource.ORE,
+                        ):
+                            amount = inventory.count(
+                                resource
+                            )
+
+                            if amount:
+                                simulated.add(
+                                    resource,
+                                    amount,
+                                )
+
+                        for resource, amount in offer.give:
+                            simulated.remove(
+                                resource,
+                                amount,
+                            )
+
+                        for resource, amount in offer.receive:
+                            simulated.add(
+                                resource,
+                                amount,
+                            )
+
+                        after_progress = (
+                            self._build_resource_progress(
+                                simulated,
+                                build_type,
+                            )
+                        )
+
+                        progress_gain = (
+                            after_progress
+                            - before_progress
+                        )
+
+                        # Require at least one quarter of
+                        # a build's card cost worth of
+                        # concrete progress.
+                        #
+                        # For settlements, for example,
+                        # this means gaining at least one
+                        # genuinely useful card.
+                        if progress_gain < 0.20:
+                            continue
+
+                        # Screen for negotiation
+                        # plausibility, NOT immediate
+                        # acceptance.
+                        #
+                        # Calling evaluate_player_trade()
+                        # here would guarantee that every
+                        # proposal surviving this filter is
+                        # accepted when the actual
+                        # negotiation evaluates the same
+                        # unchanged offer.
+                        recipient_ratio = 1.0
+
+                        if agents is not None:
+                            recipient_agent = agents[
+                                other.player_id
+                            ]
+
+                            # A player at 9 visible VP is
+                            # already rejected by adaptive
+                            # recipients, so avoid starting
+                            # a pointless negotiation.
+                            if (
+                                player.victory_points
+                                >= 9
+                            ):
+                                continue
+
+                            if (
+                                hasattr(
+                                    recipient_agent,
+                                    "_trade_bundle_value",
+                                )
+                            ):
+                                recipient_inventory = (
+                                    inventories[
+                                        other.player_id
+                                    ]
+                                )
+
+                                recipient_incoming = (
+                                    recipient_agent
+                                    ._trade_bundle_value(
+                                        offer.give,
+                                        recipient_inventory,
+                                    )
+                                )
+
+                                recipient_outgoing = (
+                                    recipient_agent
+                                    ._trade_bundle_value(
+                                        offer.receive,
+                                        recipient_inventory,
+                                    )
+                                )
+
+                                if recipient_outgoing > 0:
+                                    recipient_ratio = (
+                                        recipient_incoming
+                                        / recipient_outgoing
+                                    )
+                                elif recipient_incoming > 0:
+                                    recipient_ratio = 2.0
+                                else:
+                                    recipient_ratio = 1.0
+
+                                # Offers below this point are
+                                # sufficiently unfavorable
+                                # that a rational recipient
+                                # would be unlikely even to
+                                # bargain over them.
+                                if recipient_ratio < 0.85:
+                                    continue
+
                         deficit_progress = sum(
                             min(
                                 amount,
@@ -1615,6 +2507,24 @@ class AdaptiveStrategyAgent(TurnAgent):
                             )
                         )
 
+                        completes_build = (
+                            simulated.can_afford(
+                                build_type
+                            )
+                        )
+
+                        # A realistic opening offer
+                        # should be plausible without being
+                        # deliberately over-generous.
+                        #
+                        # The recipient accepts around 1.0+
+                        # value; an opening near 0.92 leaves
+                        # room for genuine bargaining.
+                        bargaining_fit = -abs(
+                            recipient_ratio
+                            - 0.92
+                        )
+
                         candidates.append(
                             (
                                 utilities[
@@ -1622,7 +2532,12 @@ class AdaptiveStrategyAgent(TurnAgent):
                                         build_type
                                     ]
                                 ],
+                                int(
+                                    completes_build
+                                ),
+                                progress_gain,
                                 deficit_progress,
+                                bargaining_fit,
                                 self_gain,
                                 simplicity,
                                 -other.player_id,
@@ -1640,8 +2555,11 @@ class AdaptiveStrategyAgent(TurnAgent):
                 item[2],
                 item[3],
                 item[4],
+                item[5],
+                item[6],
+                item[7],
                 repr(
-                    item[5]
+                    item[8]
                 ),
             ),
             reverse=True,
@@ -1649,7 +2567,7 @@ class AdaptiveStrategyAgent(TurnAgent):
 
         return candidates[
             0
-        ][5]
+        ][8]
 
     def _trade_bundle_value(
         self,
@@ -1679,10 +2597,20 @@ class AdaptiveStrategyAgent(TurnAgent):
         offer,
     ) -> bool:
         """
-        Decide whether to accept an offered domestic
-        trade from this player's perspective.
+        Decide whether this player accepts a domestic
+        trade.
+
+        Acceptance requires a real strategic benefit,
+        not merely a nonnegative abstract resource
+        exchange.
         """
 
+        from catanlab.action_scoring import (
+            score_actions,
+        )
+        from catanlab.economy import (
+            PlayerInventory,
+        )
         from catanlab.trading import (
             validate_trade_offer,
         )
@@ -1703,8 +2631,8 @@ class AdaptiveStrategyAgent(TurnAgent):
             offer.proposer_id
         ]
 
-        # Avoid voluntarily enabling an opponent who
-        # is already one visible point from victory.
+        # Do not voluntarily help an opponent who is
+        # already one visible point from victory.
         if proposer.victory_points >= 9:
             return False
 
@@ -1712,10 +2640,6 @@ class AdaptiveStrategyAgent(TurnAgent):
             player.player_id
         ]
 
-        # From the recipient's perspective:
-        #
-        # offer.give    = cards the recipient receives
-        # offer.receive = cards the recipient gives away
         incoming_value = (
             self._trade_bundle_value(
                 offer.give,
@@ -1730,10 +2654,173 @@ class AdaptiveStrategyAgent(TurnAgent):
             )
         )
 
-        return (
-            incoming_value
-            >= outgoing_value
+        if outgoing_value <= 0:
+            value_ratio = (
+                2.0
+                if incoming_value > 0
+                else 1.0
+            )
+        else:
+            value_ratio = (
+                incoming_value
+                / outgoing_value
+            )
+
+        # Very poor terms are not worth considering,
+        # regardless of short-term build progress.
+        if value_ratio < 0.90:
+            return False
+
+        # Simulate the recipient's post-trade hand.
+        simulated = PlayerInventory()
+
+        for resource in (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        ):
+            amount = inventory.count(
+                resource
+            )
+
+            if amount:
+                simulated.add(
+                    resource,
+                    amount,
+                )
+
+        # Recipient receives offer.give and gives
+        # offer.receive.
+        for resource, amount in offer.receive:
+            simulated.remove(
+                resource,
+                amount,
+            )
+
+        for resource, amount in offer.give:
+            simulated.add(
+                resource,
+                amount,
+            )
+
+        utilities = score_actions(
+            self.strategy,
+            player,
+            players,
+        ).as_dict()
+
+        build_to_action = {
+            BuildType.CITY:
+                ActionType.BUILD_CITY,
+            BuildType.SETTLEMENT:
+                ActionType.BUILD_SETTLEMENT,
+            BuildType.DEV_CARD:
+                ActionType.BUY_DEV_CARD,
+            BuildType.ROAD:
+                ActionType.BUILD_ROAD,
+        }
+
+        legal_builds = []
+
+        if legal_city_vertices(
+            player
+        ):
+            legal_builds.append(
+                BuildType.CITY
+            )
+
+        if legal_settlement_vertices(
+            board,
+            players,
+            player,
+        ):
+            legal_builds.append(
+                BuildType.SETTLEMENT
+            )
+
+        if legal_road_edges(
+            board,
+            players,
+            player,
+        ):
+            legal_builds.append(
+                BuildType.ROAD
+            )
+
+        legal_builds.append(
+            BuildType.DEV_CARD
         )
+
+        best_progress_gain = 0.0
+        newly_affordable = False
+
+        for build_type in legal_builds:
+            action_type = (
+                build_to_action[
+                    build_type
+                ]
+            )
+
+            if (
+                utilities[action_type]
+                <= utilities[
+                    ActionType.PASS
+                ]
+            ):
+                continue
+
+            before = (
+                self._build_resource_progress(
+                    inventory,
+                    build_type,
+                )
+            )
+
+            after = (
+                self._build_resource_progress(
+                    simulated,
+                    build_type,
+                )
+            )
+
+            best_progress_gain = max(
+                best_progress_gain,
+                after - before,
+            )
+
+            if (
+                not inventory.can_afford(
+                    build_type
+                )
+                and simulated.can_afford(
+                    build_type
+                )
+            ):
+                newly_affordable = True
+
+        # Strongly favorable terms are enough on
+        # their own.
+        if value_ratio >= 1.15:
+            return True
+
+        # Otherwise the trade must materially improve
+        # something the recipient actually wants to
+        # build.
+        if (
+            newly_affordable
+            and value_ratio >= 0.95
+        ):
+            return True
+
+        if (
+            best_progress_gain >= 0.20
+            and value_ratio >= 1.00
+        ):
+            return True
+
+        return False
 
     def _bundle_distance(
         self,
@@ -1912,10 +2999,24 @@ class AdaptiveStrategyAgent(TurnAgent):
                 # A counteroffer should not make this
                 # player strictly worse off according
                 # to its own current valuation.
-                if (
-                    incoming_value
-                    < outgoing_value
-                ):
+                # Counteroffers should improve this
+                # player's position enough to justify
+                # continuing the negotiation. Merely
+                # breaking even creates almost-certain
+                # deal closure between similar agents.
+                if outgoing_value > 0:
+                    counter_ratio = (
+                        incoming_value
+                        / outgoing_value
+                    )
+                else:
+                    counter_ratio = (
+                        2.0
+                        if incoming_value > 0
+                        else 1.0
+                    )
+
+                if counter_ratio < 1.05:
                     continue
 
                 candidate = TradeOffer(
@@ -2002,6 +3103,7 @@ class AdaptiveStrategyAgent(TurnAgent):
         players: list[PlayerState] | None = None,
         utilities: dict[ActionType, float] | None = None,
         dev_deck: DevCardDeck | None = None,
+        bank: ResourceBank | None = None,
     ) -> tuple[
         TurnAction,
         BuildType,
@@ -2159,13 +3261,27 @@ class AdaptiveStrategyAgent(TurnAgent):
             # will reevaluate after each trade, so a
             # build that is several cards short can be
             # approached over multiple useful trades.
+            available_receives = [
+                resource
+                for resource, deficit
+                in deficits.items()
+                if (
+                    deficit > 0
+                    and (
+                        bank is None
+                        or bank.can_supply(
+                            resource,
+                            1,
+                        )
+                    )
+                )
+            ]
+
+            if not available_receives:
+                continue
+
             receive = max(
-                (
-                    resource
-                    for resource, deficit
-                    in deficits.items()
-                    if deficit > 0
-                ),
+                available_receives,
                 key=lambda resource: (
                     deficits[resource],
                     resource.value,
@@ -2360,6 +3476,7 @@ class AdaptiveStrategyAgent(TurnAgent):
         player: PlayerState,
         inventory: PlayerInventory,
         dev_deck: DevCardDeck | None = None,
+        bank: ResourceBank | None = None,
     ) -> TurnAction:
         from catanlab.action_scoring import (
             score_actions,
@@ -2483,6 +3600,7 @@ class AdaptiveStrategyAgent(TurnAgent):
                 players=players,
                 utilities=utilities,
                 dev_deck=dev_deck,
+                bank=bank,
             )
         )
 

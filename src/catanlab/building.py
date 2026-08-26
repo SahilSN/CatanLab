@@ -2,6 +2,7 @@ from catanlab.board import Board
 from catanlab.economy import (
     BuildType,
     PlayerInventory,
+    ResourceBank,
 )
 from catanlab.longest_road import (
     update_longest_road,
@@ -22,6 +23,7 @@ def build_road(
     inventory: PlayerInventory,
     vertex_a: int,
     vertex_b: int,
+    bank: ResourceBank | None = None,
 ) -> None:
     edge = canonical_edge(
         vertex_a,
@@ -40,7 +42,8 @@ def build_road(
         )
 
     inventory.spend(
-        BuildType.ROAD
+        BuildType.ROAD,
+        bank=bank,
     )
 
     player.roads.append(
@@ -62,6 +65,7 @@ def build_settlement(
     player: PlayerState,
     inventory: PlayerInventory,
     vertex_id: int,
+    bank: ResourceBank | None = None,
 ) -> None:
     if len(player.settlements) >= MAX_SETTLEMENTS:
         raise ValueError(
@@ -96,7 +100,8 @@ def build_settlement(
             )
 
     inventory.spend(
-        BuildType.SETTLEMENT
+        BuildType.SETTLEMENT,
+        bank=bank,
     )
 
     player.settlements.append(
@@ -112,6 +117,7 @@ def build_city(
     player: PlayerState,
     inventory: PlayerInventory,
     vertex_id: int,
+    bank: ResourceBank | None = None,
 ) -> None:
     if len(player.cities) >= MAX_CITIES:
         raise ValueError(
@@ -125,7 +131,8 @@ def build_city(
         )
 
     inventory.spend(
-        BuildType.CITY
+        BuildType.CITY,
+        bank=bank,
     )
 
     player.settlements.remove(

@@ -7,7 +7,11 @@ from catanlab.devcards import (
     build_dev_card_deck,
     update_largest_army,
 )
-from catanlab.economy import PlayerInventory
+from catanlab.economy import (
+    PlayerInventory,
+    ResourceBank,
+    validate_resource_conservation,
+)
 from catanlab.longest_road import (
     update_longest_road,
 )
@@ -64,9 +68,10 @@ class GameResult:
     ] = ()
     board_seed: int | None = None
     dev_seed: int | None = None
+    bank: ResourceBank | None = None
 
 
-def setup_game(
+def _setup_game_with_bank(
     strategies: list[StrategyType],
     board_seed: int | None = None,
     dev_seed: int | None = None,
@@ -102,10 +107,16 @@ def setup_game(
         for _ in draft.players
     ]
 
+    # The finite bank exists before starting
+    # resources are distributed so conservation
+    # holds from the beginning of the game.
+    bank = ResourceBank()
+
     grant_second_settlement_resources(
         board,
         draft.players,
         inventories,
+        bank=bank,
     )
 
     turn_agents = [
@@ -125,8 +136,42 @@ def setup_game(
         inventories,
         turn_agents,
         dev_deck,
+        bank,
     )
 
+
+
+def setup_game(
+    strategies: list[StrategyType],
+    board_seed: int | None = None,
+    dev_seed: int | None = None,
+):
+    """
+    Public setup API.
+
+    Preserves the original five-value return shape.
+    """
+
+    (
+        board,
+        draft,
+        inventories,
+        turn_agents,
+        dev_deck,
+        bank,
+    ) = _setup_game_with_bank(
+        strategies,
+        board_seed=board_seed,
+        dev_seed=dev_seed,
+    )
+
+    return (
+        board,
+        draft,
+        inventories,
+        turn_agents,
+        dev_deck,
+    )
 
 def winner(
     players: list[PlayerState],
@@ -150,6 +195,7 @@ def run_game(
     strategies: list[StrategyType],
     seed: int | None = None,
     max_turns: int = 2000,
+    validate_conservation: bool = False,
 ) -> GameResult:
     """
     Run one complete four-player Catan game.
@@ -176,13 +222,17 @@ def run_game(
         inventories,
         agents,
         dev_deck,
-    ) = setup_game(
+        bank,
+    ) = _setup_game_with_bank(
         strategies,
         board_seed=board_seed,
         dev_seed=dev_seed,
     )
 
     players = draft.players
+
+    # One finite resource bank persists for the
+    # entire game.
 
     history = []
     award_history = []
@@ -209,11 +259,18 @@ def run_game(
             roll=roll,
             dev_deck=dev_deck,
             rng=rng,
+            bank=bank,
         )
 
         history.append(
             result
         )
+
+        if validate_conservation:
+            validate_resource_conservation(
+                bank,
+                inventories,
+            )
 
         update_largest_army(
             players
@@ -296,6 +353,7 @@ def run_game(
                 ),
                 board_seed=board_seed,
                 dev_seed=dev_seed,
+                bank=bank,
             )
 
     return GameResult(

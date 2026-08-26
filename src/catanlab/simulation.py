@@ -663,6 +663,7 @@ def grant_second_settlement_resources(
     board: Board,
     players: list[PlayerState],
     inventories,
+    bank=None,
 ) -> None:
     """
     Grant each player starting resources from
@@ -670,6 +671,9 @@ def grant_second_settlement_resources(
 
     Each adjacent non-desert tile contributes one
     resource card.
+
+    If a finite bank is supplied, each granted card
+    is removed from that bank.
     """
 
     from catanlab.resources import Resource
@@ -708,6 +712,22 @@ def grant_second_settlement_resources(
                 == Resource.DESERT
             ):
                 continue
+
+            if bank is not None:
+                if not bank.can_supply(
+                    tile.resource,
+                    1,
+                ):
+                    raise ValueError(
+                        "Bank cannot supply "
+                        "starting resource "
+                        f"{tile.resource.value}"
+                    )
+
+                bank.remove(
+                    tile.resource,
+                    1,
+                )
 
             inventory.add(
                 tile.resource

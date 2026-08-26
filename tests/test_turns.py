@@ -1611,3 +1611,612 @@ def test_domestic_trading_is_interleaved_with_build_actions():
         active_agent.trade_calls
         >= 2
     )
+
+
+def test_failed_trade_is_not_repeated_without_state_change():
+    from catanlab.board import Board
+    from catanlab.economy import (
+        PlayerInventory,
+    )
+    from catanlab.resources import (
+        Resource,
+    )
+    from catanlab.simulation import (
+        PlayerState,
+    )
+    from catanlab.trading import (
+        TradeOffer,
+        make_bundle,
+    )
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(
+            player_id=0
+        ),
+        PlayerState(
+            player_id=1
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(
+        Resource.WOOD,
+        1,
+    )
+
+    inventories[1].add(
+        Resource.ORE,
+        1,
+    )
+
+    class ActiveAgent(TurnAgent):
+        def __init__(self):
+            self.proposals = 0
+            self.actions = [
+                TurnAction(
+                    action_type=(
+                        ActionType.PASS
+                    )
+                )
+            ]
+
+        def propose_player_trade(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            excluded_recipients=None,
+            agents=None,
+        ):
+            self.proposals += 1
+
+            return TradeOffer(
+                proposer_id=0,
+                recipient_id=1,
+                give=make_bundle(
+                    (
+                        Resource.WOOD,
+                        1,
+                    ),
+                ),
+                receive=make_bundle(
+                    (
+                        Resource.ORE,
+                        1,
+                    ),
+                ),
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return self.actions.pop(
+                0
+            )
+
+    class RejectAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=(
+                    ActionType.PASS
+                )
+            )
+
+        def evaluate_player_trade(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            offer,
+        ):
+            return False
+
+        def counter_player_trade(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            offer,
+            attempted_offers=None,
+        ):
+            return None
+
+    active = ActiveAgent()
+
+    result = run_turn(
+        board,
+        players,
+        inventories,
+        [
+            active,
+            RejectAgent(),
+        ],
+        player_id=0,
+        roll=2,
+    )
+
+    assert result.trade_sequence_count == 1
+    assert result.trade_offer_count == 1
+    assert len(
+        result.player_trades
+    ) == 0
+
+    assert active.proposals == 1
+
+
+def test_roll_seven_discards_exactly_half_of_large_hand():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(player_id=1),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    for _ in range(8):
+        inventories[1].add(
+            Resource.WOOD,
+            1,
+        )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    agents = [
+        PassAgent(),
+        PassAgent(),
+    ]
+
+    result = run_turn(
+        board,
+        players,
+        inventories,
+        agents,
+        player_id=0,
+        roll=7,
+    )
+
+    assert len(
+        result.discards[1]
+    ) == 4
+
+    assert (
+        inventories[1].total()
+        == 4
+    )
+
+
+def test_roll_seven_does_not_discard_with_seven_cards():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(player_id=1),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    for _ in range(7):
+        inventories[1].add(
+            Resource.WHEAT,
+            1,
+        )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    result = run_turn(
+        board,
+        players,
+        inventories,
+        [
+            PassAgent(),
+            PassAgent(),
+        ],
+        player_id=0,
+        roll=7,
+    )
+
+    assert 1 not in result.discards
+    assert inventories[1].total() == 7
+
+
+def test_roll_seven_uses_agent_discard_choice():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(player_id=1),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WOOD,
+        4,
+    )
+    inventories[1].add(
+        Resource.ORE,
+        4,
+    )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    class OreDiscardAgent(PassAgent):
+        def choose_discards(
+            self,
+            player,
+            inventory,
+            count,
+        ):
+            assert count == 4
+            return [
+                Resource.ORE,
+                Resource.ORE,
+                Resource.ORE,
+                Resource.ORE,
+            ]
+
+    result = run_turn(
+        board,
+        players,
+        inventories,
+        [
+            PassAgent(),
+            OreDiscardAgent(),
+        ],
+        player_id=0,
+        roll=7,
+    )
+
+    assert result.discards[1] == [
+        Resource.ORE,
+        Resource.ORE,
+        Resource.ORE,
+        Resource.ORE,
+    ]
+
+    assert (
+        inventories[1].count(
+            Resource.ORE
+        )
+        == 0
+    )
+
+    assert (
+        inventories[1].count(
+            Resource.WOOD
+        )
+        == 4
+    )
+
+
+def test_full_ows_discard_policy_preserves_ore_and_wheat():
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    inventory = PlayerInventory()
+
+    inventory.add(Resource.WOOD, 5)
+    inventory.add(Resource.BRICK, 1)
+    inventory.add(Resource.SHEEP, 1)
+    inventory.add(Resource.WHEAT, 1)
+    inventory.add(Resource.ORE, 1)
+
+    player = PlayerState(
+        player_id=0
+    )
+
+    agent = AdaptiveStrategyAgent(
+        StrategyType.FULL_OWS
+    )
+
+    discarded = agent.choose_discards(
+        player,
+        inventory,
+        4,
+    )
+
+    assert len(discarded) == 4
+
+    # FULL_OWS strongly values ore/wheat and has a
+    # large low-value wood surplus, so wood should be
+    # discarded before those scarce premium cards.
+    assert discarded == [
+        Resource.WOOD,
+        Resource.WOOD,
+        Resource.WOOD,
+        Resource.WOOD,
+    ]
+
+
+def test_robber_prefers_high_value_opponent_city():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.economy import (
+        PlayerInventory,
+    )
+    from catanlab.resources import (
+        Resource,
+    )
+    from catanlab.simulation import (
+        PlayerState,
+    )
+    from catanlab.turns import (
+        _knight_target_tile,
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+            Tile(
+                id=1,
+                coord=(1, 0),
+                resource=Resource.WOOD,
+                number=3,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[1],
+            ),
+        ],
+        edges=[],
+    )
+
+    board.robber_tile_id = None
+
+    players = [
+        PlayerState(
+            player_id=0,
+        ),
+        PlayerState(
+            player_id=1,
+            cities=[0],
+        ),
+        PlayerState(
+            player_id=2,
+            settlements=[1],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WHEAT,
+        1,
+    )
+    inventories[2].add(
+        Resource.WOOD,
+        1,
+    )
+
+    target = _knight_target_tile(
+        board,
+        players,
+        inventories,
+        players[0],
+    )
+
+    assert target == 0
+
+
+def test_robber_avoids_blocking_own_city_when_opponent_target_exists():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.economy import (
+        PlayerInventory,
+    )
+    from catanlab.resources import (
+        Resource,
+    )
+    from catanlab.simulation import (
+        PlayerState,
+    )
+    from catanlab.turns import (
+        _knight_target_tile,
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+            Tile(
+                id=1,
+                coord=(1, 0),
+                resource=Resource.WOOD,
+                number=5,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[1],
+            ),
+        ],
+        edges=[],
+    )
+
+    board.robber_tile_id = None
+
+    players = [
+        PlayerState(
+            player_id=0,
+            cities=[0],
+        ),
+        PlayerState(
+            player_id=1,
+            settlements=[1],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.BRICK,
+        1,
+    )
+
+    target = _knight_target_tile(
+        board,
+        players,
+        inventories,
+        players[0],
+    )
+
+    assert target == 1

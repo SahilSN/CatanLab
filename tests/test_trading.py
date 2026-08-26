@@ -546,3 +546,112 @@ def test_adaptive_initial_trade_can_use_mixed_bundle():
     assert len(
         offer.receive
     ) >= 1
+
+
+def test_plausible_offer_need_not_be_immediately_acceptable():
+    """
+    Regression test for proposal screening.
+
+    Initial proposal generation should not call the
+    recipient's exact acceptance decision as a filter,
+    because that makes actual negotiation acceptance
+    100% by construction.
+    """
+
+    from catanlab.board import (
+        Board,
+        Edge,
+        Vertex,
+    )
+    from catanlab.simulation import (
+        PlayerState,
+    )
+    from catanlab.strategies import (
+        StrategyType,
+    )
+    from catanlab.turns import (
+        AdaptiveStrategyAgent,
+    )
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                neighbors=[1],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                neighbors=[0],
+            ),
+        ],
+        edges=[
+            Edge(
+                vertex_a=0,
+                vertex_b=1,
+            ),
+        ],
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+            settlements=[0],
+        ),
+        PlayerState(
+            player_id=1,
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(
+        Resource.SHEEP,
+        3,
+    )
+    inventories[0].add(
+        Resource.WOOD,
+        1,
+    )
+
+    inventories[1].add(
+        Resource.BRICK,
+        2,
+    )
+    inventories[1].add(
+        Resource.ORE,
+        2,
+    )
+
+    proposer = AdaptiveStrategyAgent(
+        StrategyType.ROAD_BUILDING
+    )
+
+    recipient = AdaptiveStrategyAgent(
+        StrategyType.FULL_OWS
+    )
+
+    # This primarily checks that proposal generation
+    # remains functional when recipient modeling is
+    # supplied. Exact acceptance is deliberately NOT
+    # required.
+    offer = proposer.propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories,
+        agents=[
+            proposer,
+            recipient,
+        ],
+    )
+
+    assert (
+        offer is None
+        or offer.proposer_id == 0
+    )

@@ -61,11 +61,13 @@ def buy_dev_card(
     player,
     inventory,
     deck: DevCardDeck,
+    bank=None,
 ):
     from catanlab.economy import BuildType
 
     inventory.spend(
-        BuildType.DEV_CARD
+        BuildType.DEV_CARD,
+        bank=bank,
     )
 
     card = draw_dev_card(
@@ -262,6 +264,7 @@ def play_knight_and_move_robber(
 def discard_for_seven(
     inventory,
     rng,
+    bank=None,
 ) -> list:
     """
     Discard half the player's hand, rounded down,
@@ -296,6 +299,12 @@ def discard_for_seven(
         inventory.remove(
             resource
         )
+
+        if bank is not None:
+            bank.add(
+                resource,
+                1,
+            )
 
         discarded.append(
             resource
@@ -400,12 +409,16 @@ def rob_adjacent_player(
     inventories,
     thief_id: int,
     rng,
+    victim_id: int | None = None,
 ):
     """
-    Steal one random card from a randomly selected
-    eligible opponent adjacent to the robber.
+    Steal one random resource from an eligible
+    opponent adjacent to the robber.
 
-    Opponents with empty hands are excluded.
+    If victim_id is omitted, choose an eligible
+    victim randomly for backward compatibility.
+
+    The stolen resource itself is always random.
     """
 
     if board.robber_tile_id is None:
@@ -431,9 +444,16 @@ def rob_adjacent_player(
     if not eligible:
         return None
 
-    victim_id = rng.choice(
-        eligible
-    )
+    if victim_id is None:
+        victim_id = rng.choice(
+            eligible
+        )
+    elif victim_id not in eligible:
+        raise ValueError(
+            "Selected robber victim is not "
+            "an eligible adjacent opponent: "
+            f"{victim_id}"
+        )
 
     resource = steal_random_resource(
         thief_id,
@@ -453,9 +473,14 @@ def play_year_of_plenty(
     inventory,
     resource_a,
     resource_b,
+    bank=None,
 ) -> None:
     """
     Play Year of Plenty and gain any two resources.
+
+    If a finite bank is supplied, both requested
+    cards must be available before the card is
+    consumed or any resources are transferred.
     """
 
     card = DevCardType.YEAR_OF_PLENTY.value
@@ -469,18 +494,70 @@ def play_year_of_plenty(
             "Year of Plenty card."
         )
 
+    # Resource cards only.
+    from catanlab.resources import Resource
+
+    if (
+        resource_a == Resource.DESERT
+        or resource_b == Resource.DESERT
+    ):
+        raise ValueError(
+            "Year of Plenty cannot take desert."
+        )
+
+    # Validate the complete request before changing
+    # either the player's cards or the bank.
+    if bank is not None:
+        requested = {}
+
+        for resource in (
+            resource_a,
+            resource_b,
+        ):
+            requested[resource] = (
+                requested.get(
+                    resource,
+                    0,
+                )
+                + 1
+            )
+
+        for resource, amount in (
+            requested.items()
+        ):
+            if not bank.can_supply(
+                resource,
+                amount,
+            ):
+                raise ValueError(
+                    "Bank cannot supply Year of "
+                    "Plenty request: "
+                    f"{amount} {resource.value}."
+                )
+
     player.dev_cards.remove(
         card
     )
 
+    if bank is not None:
+        bank.remove(
+            resource_a,
+            1,
+        )
+        bank.remove(
+            resource_b,
+            1,
+        )
+
     inventory.add(
-        resource_a
+        resource_a,
+        1,
     )
 
     inventory.add(
-        resource_b
+        resource_b,
+        1,
     )
-
 
 def play_monopoly(
     player,

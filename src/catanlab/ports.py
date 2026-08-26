@@ -266,12 +266,17 @@ def maritime_trade(
     inventory,
     give: Resource,
     receive: Resource,
+    bank=None,
 ) -> int:
     """
     Trade resources with the bank using the best
     maritime ratio available to the player.
 
     Returns the number of cards spent.
+
+    If a finite resource bank is supplied, offered
+    cards are returned to the bank and the received
+    card is removed from it.
     """
 
     if give == Resource.DESERT:
@@ -303,17 +308,42 @@ def maritime_trade(
             f"for this maritime trade."
         )
 
+    # Validate bank availability before mutating
+    # either side of the exchange.
+    if (
+        bank is not None
+        and not bank.can_supply(
+            receive,
+            1,
+        )
+    ):
+        raise ValueError(
+            "Bank cannot supply requested "
+            f"resource {receive.value}."
+        )
+
     inventory.remove(
         give,
         ratio,
     )
 
+    if bank is not None:
+        bank.add(
+            give,
+            ratio,
+        )
+
+        bank.remove(
+            receive,
+            1,
+        )
+
     inventory.add(
-        receive
+        receive,
+        1,
     )
 
     return ratio
-
 
 def ports_at_vertex(
     board: Board,
