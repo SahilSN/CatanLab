@@ -67,7 +67,7 @@ STRATEGY_PROFILES = {
             Resource.BRICK: 1.5,
             Resource.WHEAT: 0.7,
             Resource.SHEEP: 0.7,
-            Resource.ORE: 0.7,
+            Resource.ORE: 0.3,
         },
         diversity_weight=0.5,
         description=(
