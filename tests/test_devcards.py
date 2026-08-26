@@ -1183,3 +1183,193 @@ def test_road_building_can_place_only_one_legal_road():
         DevCardType.ROAD_BUILDING.value
         not in player.dev_cards
     )
+
+
+def test_buy_dev_card_empty_deck_does_not_spend_resources():
+    from catanlab.devcards import (
+        DevCardDeck,
+        buy_dev_card,
+    )
+    from catanlab.economy import (
+        PlayerInventory,
+        ResourceBank,
+    )
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+
+    player = PlayerState(
+        player_id=0
+    )
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.SHEEP
+    )
+    inventory.add(
+        Resource.WHEAT
+    )
+    inventory.add(
+        Resource.ORE
+    )
+
+    bank = ResourceBank()
+
+    # These cards are currently in the player's
+    # hand, so remove them from the bank to create
+    # a conservation-consistent state.
+    bank.remove(
+        Resource.SHEEP
+    )
+    bank.remove(
+        Resource.WHEAT
+    )
+    bank.remove(
+        Resource.ORE
+    )
+
+    deck = DevCardDeck(
+        cards=[]
+    )
+
+    before_hand = {
+        Resource.SHEEP:
+            inventory.count(Resource.SHEEP),
+        Resource.WHEAT:
+            inventory.count(Resource.WHEAT),
+        Resource.ORE:
+            inventory.count(Resource.ORE),
+    }
+
+    before_bank = {
+        Resource.SHEEP:
+            bank.count(Resource.SHEEP),
+        Resource.WHEAT:
+            bank.count(Resource.WHEAT),
+        Resource.ORE:
+            bank.count(Resource.ORE),
+    }
+
+    try:
+        buy_dev_card(
+            player,
+            inventory,
+            deck,
+            bank=bank,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "Expected purchase from empty deck to fail."
+        )
+
+    assert {
+        resource:
+            inventory.count(resource)
+        for resource in before_hand
+    } == before_hand
+
+    assert {
+        resource:
+            bank.count(resource)
+        for resource in before_bank
+    } == before_bank
+
+    assert player.dev_cards == []
+    assert player.new_dev_cards == []
+    assert deck.cards == []
+
+
+def test_knight_invalid_robber_tile_does_not_consume_card():
+    from catanlab.board import build_random_board
+    from catanlab.devcards import (
+        DevCardType,
+        play_knight_and_move_robber,
+    )
+    from catanlab.simulation import PlayerState
+
+    board = build_random_board(
+        seed=123
+    )
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.KNIGHT.value
+        ],
+    )
+
+    original_robber = (
+        board.robber_tile_id
+    )
+
+    try:
+        play_knight_and_move_robber(
+            player,
+            board,
+            tile_id=len(board.tiles),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "Invalid robber tile should fail."
+        )
+
+    assert (
+        DevCardType.KNIGHT.value
+        in player.dev_cards
+    )
+    assert player.knights_played == 0
+    assert (
+        board.robber_tile_id
+        == original_robber
+    )
+
+
+def test_knight_same_robber_tile_does_not_consume_card():
+    from catanlab.board import build_random_board
+    from catanlab.devcards import (
+        DevCardType,
+        play_knight_and_move_robber,
+    )
+    from catanlab.simulation import PlayerState
+
+    board = build_random_board(
+        seed=123
+    )
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.KNIGHT.value
+        ],
+    )
+
+    original_robber = (
+        board.robber_tile_id
+    )
+
+    try:
+        play_knight_and_move_robber(
+            player,
+            board,
+            tile_id=original_robber,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "Robber must move to another tile."
+        )
+
+    assert (
+        DevCardType.KNIGHT.value
+        in player.dev_cards
+    )
+    assert player.knights_played == 0
+    assert (
+        board.robber_tile_id
+        == original_robber
+    )

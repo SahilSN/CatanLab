@@ -281,3 +281,168 @@ def test_hidden_vp_cards_still_count_for_winning():
     assert player.victory_points == 10
 
     assert winner([player]) == 0
+
+
+def test_opening_draft_uses_standard_snake_order():
+    """
+    Four-player setup must proceed:
+        0, 1, 2, 3, 3, 2, 1, 0.
+    """
+
+    (
+        board,
+        draft,
+        inventories,
+        agents,
+        dev_deck,
+    ) = setup_game(
+        standard_strategies(),
+        board_seed=42,
+        dev_seed=42,
+    )
+
+    assert [
+        player_id
+        for player_id, _ in draft.placement_order
+    ] == [
+        0,
+        1,
+        2,
+        3,
+        3,
+        2,
+        1,
+        0,
+    ]
+
+    assert [
+        player_id
+        for player_id, _ in draft.road_order
+    ] == [
+        0,
+        1,
+        2,
+        3,
+        3,
+        2,
+        1,
+        0,
+    ]
+
+
+def test_each_setup_road_touches_just_placed_settlement():
+    """
+    Each free setup road must connect directly to the
+    settlement placed in the same setup action.
+    """
+
+    (
+        board,
+        draft,
+        inventories,
+        agents,
+        dev_deck,
+    ) = setup_game(
+        standard_strategies(),
+        board_seed=42,
+        dev_seed=42,
+    )
+
+    assert len(draft.placement_order) == len(
+        draft.road_order
+    )
+
+    for (
+        placement,
+        road_placement,
+    ) in zip(
+        draft.placement_order,
+        draft.road_order,
+    ):
+        (
+            settlement_player_id,
+            vertex_id,
+        ) = placement
+
+        (
+            road_player_id,
+            road,
+        ) = road_placement
+
+        assert (
+            road_player_id
+            == settlement_player_id
+        )
+
+        assert vertex_id in road
+
+
+def test_setup_resources_come_from_second_settlement_only():
+    """
+    At the end of setup, each player's entire hand
+    must equal one resource from every non-desert
+    hex adjacent to their second settlement.
+    """
+
+    from collections import Counter
+
+    from catanlab.resources import Resource
+
+    (
+        board,
+        draft,
+        inventories,
+        agents,
+        dev_deck,
+    ) = setup_game(
+        standard_strategies(),
+        board_seed=42,
+        dev_seed=42,
+    )
+
+    producing_resources = (
+        Resource.WOOD,
+        Resource.BRICK,
+        Resource.SHEEP,
+        Resource.WHEAT,
+        Resource.ORE,
+    )
+
+    for player, inventory in zip(
+        draft.players,
+        inventories,
+    ):
+        second_vertex_id = (
+            player.settlements[1]
+        )
+
+        second_vertex = board.vertices[
+            second_vertex_id
+        ]
+
+        expected = Counter()
+
+        for tile_id in (
+            second_vertex.adjacent_tiles
+        ):
+            resource = board.tiles[
+                tile_id
+            ].resource
+
+            if resource != Resource.DESERT:
+                expected[resource] += 1
+
+        actual = Counter(
+            {
+                resource: inventory.count(
+                    resource
+                )
+                for resource
+                in producing_resources
+                if inventory.count(
+                    resource
+                ) > 0
+            }
+        )
+
+        assert actual == expected

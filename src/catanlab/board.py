@@ -210,9 +210,8 @@ def build_random_board(
         tile.resource = resource
         tile.number = None
 
-    assign_balanced_numbers(
-        board,
-        rng,
+    assign_standard_numbers(
+        board
     )
 
     desert = next(
@@ -262,132 +261,106 @@ HOT_NUMBERS = {
 }
 
 
-def assign_balanced_numbers(
+STANDARD_NUMBER_SPIRAL = [
+    HexCoord(0, -2),
+    HexCoord(-1, -1),
+    HexCoord(-2, 0),
+    HexCoord(-2, 1),
+    HexCoord(-2, 2),
+    HexCoord(-1, 2),
+    HexCoord(0, 2),
+    HexCoord(1, 1),
+    HexCoord(2, 0),
+    HexCoord(2, -1),
+    HexCoord(2, -2),
+    HexCoord(1, -2),
+    HexCoord(0, -1),
+    HexCoord(-1, 0),
+    HexCoord(-1, 1),
+    HexCoord(0, 1),
+    HexCoord(1, 0),
+    HexCoord(1, -1),
+    HexCoord(0, 0),
+]
+
+
+STANDARD_NUMBER_SEQUENCE = [
+    5,
+    2,
+    6,
+    3,
+    8,
+    10,
+    9,
+    12,
+    11,
+    4,
+    8,
+    10,
+    9,
+    4,
+    5,
+    6,
+    3,
+    11,
+]
+
+
+def assign_standard_numbers(
     board: Board,
-    rng: random.Random,
 ) -> None:
     """
-    Assign standard number tokens while ensuring
-    that no 6 or 8 borders another 6 or 8.
+    Assign number tokens using the standard CATAN
+    counter-clockwise spiral placement.
+
+    The sequence begins at one coastal corner and
+    spirals inward. The desert is skipped, exactly
+    as in the standard variable-board setup.
     """
 
-    playable_tiles = [
-        tile.id
+    tile_by_coord = {
+        tile.coord: tile
         for tile in board.tiles
-        if tile.resource != Resource.DESERT
-    ]
+    }
 
-    tokens = STANDARD_NUMBER_TOKENS.copy()
-
-    assignments: dict[int, int] = {}
-
-    # Tiles with more neighbors are slightly harder
-    # to assign, so process them first.
-    playable_tiles.sort(
-        key=lambda tile_id: len(
-            tile_neighbors(
-                board,
-                tile_id,
-            )
-        ),
-        reverse=True,
-    )
-
-    # Randomize within the topology enough that the
-    # same seed still determines the layout.
-    rng.shuffle(playable_tiles)
-
-    def valid(
-        tile_id: int,
-        number: int,
-    ) -> bool:
-        if number not in HOT_NUMBERS:
-            return True
-
-        for neighbor_id in tile_neighbors(
-            board,
-            tile_id,
-        ):
-            neighbor_number = assignments.get(
-                neighbor_id
-            )
-
-            if neighbor_number in HOT_NUMBERS:
-                return False
-
-        return True
-
-    def backtrack(
-        index: int,
-        remaining: list[int],
-    ) -> bool:
-        if index == len(playable_tiles):
-            return True
-
-        tile_id = playable_tiles[index]
-
-        candidates = list(
-            set(remaining)
-        )
-
-        rng.shuffle(candidates)
-
-        # Try hot numbers first occasionally so that
-        # backtracking has to solve the actual
-        # constrained portion of the problem.
-        candidates.sort(
-            key=lambda value: (
-                value not in HOT_NUMBERS
-            )
-        )
-
-        for number in candidates:
-            if not valid(
-                tile_id,
-                number,
-            ):
-                continue
-
-            assignments[
-                tile_id
-            ] = number
-
-            next_remaining = (
-                remaining.copy()
-            )
-
-            next_remaining.remove(
-                number
-            )
-
-            if backtrack(
-                index + 1,
-                next_remaining,
-            ):
-                return True
-
-            del assignments[
-                tile_id
-            ]
-
-        return False
-
-    if not backtrack(
-        0,
-        tokens,
+    if set(tile_by_coord) != set(
+        STANDARD_NUMBER_SPIRAL
     ):
-        raise RuntimeError(
-            "Unable to generate balanced "
-            "number-token layout."
+        raise ValueError(
+            "Board geometry does not match the "
+            "standard 19-hex CATAN layout."
         )
 
-    for tile_id, number in (
-        assignments.items()
-    ):
-        board.tiles[
-            tile_id
-        ].number = number
+    token_index = 0
 
-    for tile in board.tiles:
+    for coord in STANDARD_NUMBER_SPIRAL:
+        tile = tile_by_coord[coord]
+
         if tile.resource == Resource.DESERT:
             tile.number = None
+            continue
+
+        if token_index >= len(
+            STANDARD_NUMBER_SEQUENCE
+        ):
+            raise RuntimeError(
+                "Too many non-desert tiles for "
+                "standard number-token sequence."
+            )
+
+        tile.number = (
+            STANDARD_NUMBER_SEQUENCE[
+                token_index
+            ]
+        )
+
+        token_index += 1
+
+    if token_index != len(
+        STANDARD_NUMBER_SEQUENCE
+    ):
+        raise RuntimeError(
+            "Standard number-token sequence was "
+            "not completely assigned."
+        )
+

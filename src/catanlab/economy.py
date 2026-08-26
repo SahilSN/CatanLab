@@ -384,18 +384,49 @@ def produce_for_roll(
         if total_claim <= 0:
             continue
 
-        if (
-            bank is not None
-            and not bank.can_supply(
-                resource,
-                total_claim,
-            )
-        ):
-            # Standard scarcity rule:
-            # nobody receives this resource.
-            continue
-
         if bank is not None:
+            available = bank.count(
+                resource
+            )
+
+            if available < total_claim:
+                # Standard Catan scarcity rule:
+                #
+                # If multiple players are entitled
+                # to this resource and the bank
+                # cannot satisfy everyone, nobody
+                # receives it.
+                #
+                # If exactly one player is entitled,
+                # that player receives all remaining
+                # cards of that resource.
+                if len(resource_claims) > 1:
+                    continue
+
+                player_id = next(
+                    iter(resource_claims)
+                )
+
+                amount = min(
+                    available,
+                    total_claim,
+                )
+
+                if amount > 0:
+                    bank.remove(
+                        resource,
+                        amount,
+                    )
+
+                    inventories[
+                        player_id
+                    ].add(
+                        resource,
+                        amount,
+                    )
+
+                continue
+
             bank.remove(
                 resource,
                 total_claim,

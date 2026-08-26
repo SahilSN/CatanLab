@@ -65,6 +65,13 @@ def buy_dev_card(
 ):
     from catanlab.economy import BuildType
 
+    # Validate deck availability before spending
+    # resources so a failed purchase is atomic.
+    if not deck.cards:
+        raise ValueError(
+            "Development card deck is empty."
+        )
+
     inventory.spend(
         BuildType.DEV_CARD,
         bank=bank,
@@ -249,7 +256,32 @@ def play_knight_and_move_robber(
 ) -> None:
     """
     Play a Knight and move the robber.
+
+    The complete action is validated before the
+    Knight card is consumed.
     """
+
+    if tile_id < 0 or tile_id >= len(
+        board.tiles
+    ):
+        raise ValueError(
+            "Invalid robber tile."
+        )
+
+    if tile_id == board.robber_tile_id:
+        raise ValueError(
+            "Robber must move to a different tile."
+        )
+
+    # Validate Knight availability before mutating
+    # either the card state or robber position.
+    if not has_playable_dev_card(
+        player,
+        DevCardType.KNIGHT,
+    ):
+        raise ValueError(
+            "Player does not have a playable Knight card."
+        )
 
     play_knight(
         player

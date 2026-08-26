@@ -2922,3 +2922,315 @@ def test_buying_victory_point_card_can_win_immediately():
         result.actions[0].action_type
         == ActionType.BUY_DEV_CARD
     )
+
+
+def test_turn_can_end_immediately_when_player_already_has_ten_vp():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAgent,
+        run_turn,
+    )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        cities=[0, 1, 2, 3],
+        settlements=[4, 5],
+    )
+
+    assert player.victory_points == 10
+
+    result = run_turn(
+        board,
+        [player],
+        [PlayerInventory()],
+        [TurnAgent()],
+        player_id=0,
+        roll=2,
+    )
+
+    assert (
+        result.action.action_type
+        == ActionType.PASS
+    )
+
+
+def test_post_roll_dev_card_victory_stops_before_normal_action():
+    from catanlab.board import (
+        build_random_board,
+    )
+    from catanlab.devcard_policy import (
+        DevCardDecision,
+    )
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class WinningPostRollAgent(TurnAgent):
+        def __init__(self):
+            self.dev_calls = 0
+            self.action_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            self.dev_calls += 1
+
+            # Decline pre-roll, then play the third
+            # Knight immediately after the dice roll.
+            if self.dev_calls == 1:
+                return DevCardDecision(
+                    card=None,
+                    utility=0.0,
+                )
+
+            return DevCardDecision(
+                card=DevCardType.KNIGHT,
+                utility=10.0,
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+            bank=None,
+        ):
+            self.action_calls += 1
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = build_random_board(
+        seed=123
+    )
+
+    player = PlayerState(
+        player_id=0,
+        cities=[0, 1, 2, 3],
+        knights_played=2,
+        dev_cards=[
+            DevCardType.KNIGHT.value
+        ],
+    )
+
+    # 8 building VP; the third Knight should award
+    # Largest Army and bring the player to 10.
+    assert player.victory_points == 8
+
+    agent = WinningPostRollAgent()
+
+    result = run_turn(
+        board,
+        [player],
+        [PlayerInventory()],
+        [agent],
+        player_id=0,
+        roll=2,
+    )
+
+    assert player.has_largest_army
+    assert player.victory_points == 10
+    assert agent.action_calls == 0
+    assert (
+        result.action.action_type
+        == ActionType.PASS
+    )
+
+
+def test_trade_proposal_ignores_recipient_hidden_resource_composition():
+    from catanlab.board import build_random_board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    board = build_random_board(seed=321)
+
+    players = [
+        PlayerState(
+            player_id=0,
+            settlements=[0],
+            roads=[(0, 1)],
+        ),
+        PlayerState(
+            player_id=1,
+            settlements=[10],
+        ),
+    ]
+
+    agent = AdaptiveStrategyAgent(
+        StrategyType.FIVE_RESOURCE
+    )
+
+    inventories_a = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories_b = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    # Give the proposer the same exact private hand
+    # in both worlds.
+    for inventories in (
+        inventories_a,
+        inventories_b,
+    ):
+        inventories[0].add(
+            Resource.WOOD,
+            2,
+        )
+        inventories[0].add(
+            Resource.BRICK,
+            2,
+        )
+        inventories[0].add(
+            Resource.SHEEP,
+            1,
+        )
+
+    # Opponent has the same public hand size in both
+    # worlds, but completely different hidden
+    # resource identities.
+    inventories_a[1].add(
+        Resource.ORE,
+        4,
+    )
+
+    inventories_b[1].add(
+        Resource.WHEAT,
+        4,
+    )
+
+    offer_a = agent.propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories_a,
+    )
+
+    offer_b = agent.propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories_b,
+    )
+
+    assert offer_a == offer_b
+
+
+def test_trade_counteroffer_ignores_other_hidden_resource_composition():
+    from catanlab.board import build_random_board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.trading import TradeOffer
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    board = build_random_board(seed=654)
+
+    players = [
+        PlayerState(
+            player_id=0,
+            settlements=[0],
+        ),
+        PlayerState(
+            player_id=1,
+            settlements=[10],
+        ),
+    ]
+
+    agent = AdaptiveStrategyAgent(
+        StrategyType.FIVE_RESOURCE
+    )
+
+    inventories_a = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories_b = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    # Counter-proposer's own exact hand is identical.
+    for inventories in (
+        inventories_a,
+        inventories_b,
+    ):
+        inventories[1].add(
+            Resource.WOOD,
+            2,
+        )
+        inventories[1].add(
+            Resource.BRICK,
+            2,
+        )
+        inventories[1].add(
+            Resource.SHEEP,
+            1,
+        )
+
+    # Original proposer has equal public hand size,
+    # but different hidden composition.
+    inventories_a[0].add(
+        Resource.ORE,
+        4,
+    )
+
+    inventories_b[0].add(
+        Resource.WHEAT,
+        4,
+    )
+
+    offer = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.ORE, 1),),
+        receive=((Resource.WOOD, 1),),
+    )
+
+    counter_a = agent.counter_player_trade(
+        board,
+        players,
+        players[1],
+        inventories_a,
+        offer,
+    )
+
+    counter_b = agent.counter_player_trade(
+        board,
+        players,
+        players[1],
+        inventories_b,
+        offer,
+    )
+
+    assert counter_a == counter_b

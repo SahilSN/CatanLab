@@ -504,3 +504,106 @@ def test_ports_at_vertex():
     )
 
     assert port in found
+
+
+def test_matching_specific_port_beats_generic_port():
+    """
+    If a player controls both a generic 3:1 port
+    and the matching specific 2:1 port, the better
+    2:1 ratio must be used.
+    """
+
+    board = build_random_board(
+        seed=42
+    )
+
+    generic = next(
+        port
+        for port in board.ports
+        if port.resource is None
+    )
+
+    ore_port = next(
+        port
+        for port in board.ports
+        if port.resource == Resource.ORE
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[
+            generic.vertex_a,
+            ore_port.vertex_a,
+        ],
+    )
+
+    assert best_maritime_ratio(
+        board,
+        player,
+        Resource.ORE,
+    ) == 2
+
+
+def test_maritime_trade_with_finite_bank_conserves_resources():
+    """
+    A finite-bank maritime trade must return the
+    offered cards to the bank and remove the
+    received card from it.
+    """
+
+    from catanlab.economy import (
+        PlayerInventory,
+        ResourceBank,
+    )
+    from catanlab.ports import (
+        maritime_trade,
+    )
+
+    board = build_random_board(
+        seed=42
+    )
+
+    player = PlayerState(
+        player_id=0
+    )
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.WOOD,
+        4,
+    )
+
+    bank = ResourceBank()
+
+    wood_before = bank.count(
+        Resource.WOOD
+    )
+    ore_before = bank.count(
+        Resource.ORE
+    )
+
+    maritime_trade(
+        board,
+        player,
+        inventory,
+        give=Resource.WOOD,
+        receive=Resource.ORE,
+        bank=bank,
+    )
+
+    assert inventory.count(
+        Resource.WOOD
+    ) == 0
+
+    assert inventory.count(
+        Resource.ORE
+    ) == 1
+
+    assert bank.count(
+        Resource.WOOD
+    ) == wood_before + 4
+
+    assert bank.count(
+        Resource.ORE
+    ) == ore_before - 1

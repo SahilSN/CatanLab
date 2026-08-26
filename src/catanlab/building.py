@@ -54,10 +54,6 @@ def build_road(
         players
     )
 
-    update_longest_road(
-        players
-    )
-
 
 def build_settlement(
     board: Board,

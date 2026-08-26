@@ -260,3 +260,92 @@ def test_random_board_robber_starts_on_desert():
         robber_tile.resource
         == Resource.DESERT
     )
+
+
+def test_standard_number_spiral_sequence():
+    from catanlab.board import (
+        STANDARD_NUMBER_SEQUENCE,
+        STANDARD_NUMBER_SPIRAL,
+        build_random_board,
+    )
+    from catanlab.resources import Resource
+
+    for seed in range(20):
+        board = build_random_board(
+            seed=seed
+        )
+
+        tile_by_coord = {
+            tile.coord: tile
+            for tile in board.tiles
+        }
+
+        actual = [
+            tile_by_coord[coord].number
+            for coord
+            in STANDARD_NUMBER_SPIRAL
+            if (
+                tile_by_coord[coord].resource
+                != Resource.DESERT
+            )
+        ]
+
+        assert actual == (
+            STANDARD_NUMBER_SEQUENCE
+        )
+
+
+def test_standard_number_spiral_covers_every_hex_once():
+    from catanlab.board import (
+        STANDARD_NUMBER_SPIRAL,
+        build_standard_graph,
+    )
+
+    board = build_standard_graph()
+
+    assert len(
+        STANDARD_NUMBER_SPIRAL
+    ) == 19
+
+    assert len(
+        set(STANDARD_NUMBER_SPIRAL)
+    ) == 19
+
+    assert set(
+        STANDARD_NUMBER_SPIRAL
+    ) == {
+        tile.coord
+        for tile in board.tiles
+    }
+
+
+def test_standard_number_layout_has_no_adjacent_equal_tokens():
+    from catanlab.board import (
+        build_random_board,
+        tile_neighbors,
+    )
+
+    for seed in range(100):
+        board = build_random_board(
+            seed=seed
+        )
+
+        for tile in board.tiles:
+            if tile.number is None:
+                continue
+
+            for neighbor_id in tile_neighbors(
+                board,
+                tile.id,
+            ):
+                neighbor = board.tiles[
+                    neighbor_id
+                ]
+
+                if neighbor.number is None:
+                    continue
+
+                assert (
+                    tile.number
+                    != neighbor.number
+                )

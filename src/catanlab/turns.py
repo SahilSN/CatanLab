@@ -14,7 +14,6 @@ from catanlab.building import (
 from catanlab.devcards import (
     DevCardDeck,
     buy_dev_card,
-    discard_for_seven,
 )
 from catanlab.economy import (
     BuildType,
@@ -1310,7 +1309,7 @@ def _run_trade_sequence(
                 offers_made,
             )
 
-        offer = (
+        counteroffer = (
             recipient_agent.counter_player_trade(
                 board,
                 players,
@@ -1322,6 +1321,23 @@ def _run_trade_sequence(
                 ),
             )
         )
+
+        if counteroffer is None:
+            break
+
+        # A counteroffer must remain within the same
+        # two-player negotiation. Only the recipient
+        # of the current offer may counter, and the
+        # counter must go back to the current proposer.
+        if (
+            counteroffer.proposer_id
+            != offer.recipient_id
+            or counteroffer.recipient_id
+            != offer.proposer_id
+        ):
+            break
+
+        offer = counteroffer
 
     return (
         None,
@@ -1449,6 +1465,21 @@ def run_turn(
     player.new_dev_cards.clear()
 
     played_action_dev_card = False
+
+    # Turn-result bookkeeping must exist before any
+    # possible victory exit. A player may already have
+    # a winning score at the start of their turn, or
+    # may reach it with a pre-roll development card.
+    discards: dict[int, list] = {}
+
+    player_trades: list[
+        TradeOffer
+    ] = []
+
+    trade_offer_count = 0
+    trade_sequence_count = 0
+
+    actions: list[TurnAction] = []
 
     def active_player_has_won() -> bool:
         """
@@ -1588,8 +1619,6 @@ def run_turn(
     # ------------------------------------------------
     # Dice roll.
     # ------------------------------------------------
-
-    discards: dict[int, list] = {}
 
     if roll == 7:
         for pid, other_inventory in enumerate(
@@ -1743,20 +1772,35 @@ def run_turn(
         DevCardPhase.POST_ROLL
     )
 
+    if active_player_has_won():
+        actions.append(
+            TurnAction(
+                action_type=ActionType.PASS
+            )
+        )
+
+        return TurnResult(
+            player_id=player_id,
+            roll=roll,
+            action=actions[-1],
+            actions=tuple(actions),
+            discards=discards,
+            player_trades=tuple(
+                player_trades
+            ),
+            trade_offer_count=(
+                trade_offer_count
+            ),
+            trade_sequence_count=(
+                trade_sequence_count
+            ),
+        )
+
     # ------------------------------------------------
     # Normal build / purchase action.
     # ------------------------------------------------
 
-    player_trades: list[
-        TradeOffer
-    ] = []
-
-    trade_offer_count = 0
-    trade_sequence_count = 0
-
     last_failed_trade_state = None
-
-    actions: list[TurnAction] = []
 
     # Safety cap against buggy agents that never pass.
     max_normal_actions = 50
@@ -1836,6 +1880,21 @@ def run_turn(
                 try_action_dev_card(
                     DevCardPhase.POST_ROLL
                 )
+
+                # A development card played after an
+                # accepted trade may immediately create
+                # a winning score through Largest Army
+                # or Longest Road.
+                if active_player_has_won():
+                    if not actions:
+                        actions.append(
+                            TurnAction(
+                                action_type=(
+                                    ActionType.PASS
+                                )
+                            )
+                        )
+                    break
 
             elif offers_made > 0:
                 # Do not immediately reopen bargaining
