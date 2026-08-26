@@ -265,3 +265,176 @@ def test_rank_opening_pairs_returns_results():
         ranked[0].composite_score
         >= ranked[-1].composite_score
     )
+
+
+def test_resource_production_breakdown():
+    from catanlab.scoring import (
+        resource_production,
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.WHEAT,
+                number=9,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[
+                    0,
+                    1,
+                ],
+            )
+        ],
+        edges=[],
+    )
+
+    production = resource_production(
+        board,
+        board.vertices[0],
+    )
+
+    assert production[
+        Resource.ORE
+    ] == 5
+
+    assert production[
+        Resource.WHEAT
+    ] == 4
+
+    assert production[
+        Resource.WOOD
+    ] == 0
+
+
+def test_specific_port_rewards_matching_production():
+    from catanlab.board import Port
+    from catanlab.scoring import (
+        port_synergy_score,
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            )
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            )
+        ],
+        edges=[],
+        ports=[
+            Port(
+                vertex_a=0,
+                vertex_b=1,
+                resource=Resource.ORE,
+            )
+        ],
+    )
+
+    score = port_synergy_score(
+        board,
+        [
+            board.vertices[0],
+        ],
+    )
+
+    assert score == 2.5
+
+
+def test_specific_port_without_matching_production_has_no_bonus():
+    from catanlab.board import Port
+    from catanlab.scoring import (
+        port_synergy_score,
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=6,
+            )
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            )
+        ],
+        edges=[],
+        ports=[
+            Port(
+                vertex_a=0,
+                vertex_b=1,
+                resource=Resource.ORE,
+            )
+        ],
+    )
+
+    assert port_synergy_score(
+        board,
+        [
+            board.vertices[0],
+        ],
+    ) == 0.0
+
+
+def test_generic_port_receives_smaller_production_bonus():
+    from catanlab.board import Port
+    from catanlab.scoring import (
+        port_synergy_score,
+    )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=6,
+            )
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            )
+        ],
+        edges=[],
+        ports=[
+            Port(
+                vertex_a=0,
+                vertex_b=1,
+                resource=None,
+            )
+        ],
+    )
+
+    assert port_synergy_score(
+        board,
+        [
+            board.vertices[0],
+        ],
+    ) == 0.5

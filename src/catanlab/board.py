@@ -41,11 +41,30 @@ class Edge:
     vertex_b: int
 
 
+@dataclass(frozen=True)
+class Port:
+    vertex_a: int
+    vertex_b: int
+    resource: Resource | None
+
+    @property
+    def ratio(self) -> int:
+        return (
+            3
+            if self.resource is None
+            else 2
+        )
+
+
 @dataclass
 class Board:
     tiles: list[Tile]
     vertices: list[Vertex]
     edges: list[Edge]
+    robber_tile_id: int | None = None
+    ports: list[Port] = field(
+        default_factory=list
+    )
 
 
 def build_standard_graph() -> Board:
@@ -153,6 +172,7 @@ def build_standard_graph() -> Board:
         tiles=tiles,
         vertices=vertices,
         edges=edges,
+        robber_tile_id=None,
     )
 
 
@@ -193,6 +213,23 @@ def build_random_board(
     assign_balanced_numbers(
         board,
         rng,
+    )
+
+    desert = next(
+        tile
+        for tile in board.tiles
+        if tile.resource == Resource.DESERT
+    )
+
+    board.robber_tile_id = desert.id
+
+    from catanlab.ports import (
+        assign_standard_ports,
+    )
+
+    assign_standard_ports(
+        board,
+        seed=seed,
     )
 
     return board

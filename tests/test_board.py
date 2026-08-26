@@ -245,3 +245,18 @@ def test_hot_number_constraint_across_many_boards():
                 for number
                 in neighbor_numbers
             )
+
+
+def test_random_board_robber_starts_on_desert():
+    board = build_random_board(
+        seed=42
+    )
+
+    robber_tile = board.tiles[
+        board.robber_tile_id
+    ]
+
+    assert (
+        robber_tile.resource
+        == Resource.DESERT
+    )
