@@ -1270,3 +1270,149 @@ def test_apply_search_road_building_places_free_roads_isolated():
         DevCardType.ROAD_BUILDING.value
         in result.players[0].played_dev_cards
     )
+
+
+def test_monopoly_belief_ignores_hidden_resource_identity():
+    from catanlab.board import Board, Tile, Vertex
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.search import (
+        build_monopoly_gain_belief,
+    )
+    from catanlab.simulation import PlayerState
+    from catanlab.economy import PlayerInventory
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories_a = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories_b = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    # Same public hand size: 5 cards.
+    #
+    # Hidden world A: all wood.
+    inventories_a[1].add(
+        Resource.WOOD,
+        5,
+    )
+
+    # Hidden world B: all ore.
+    inventories_b[1].add(
+        Resource.ORE,
+        5,
+    )
+
+    belief_a = build_monopoly_gain_belief(
+        board,
+        players,
+        inventories_a,
+        0,
+    )
+
+    belief_b = build_monopoly_gain_belief(
+        board,
+        players,
+        inventories_b,
+        0,
+    )
+
+    assert belief_a == belief_b
+
+    # Public production is entirely ore, so the belief
+    # should assign certainty to collecting all 5 ore.
+    assert belief_a[Resource.ORE] == {
+        5: 1.0
+    }
+
+    assert belief_a[Resource.WOOD] == {
+        0: 1.0
+    }
+
+
+def test_apply_search_monopoly_outcome_isolated():
+    from catanlab.devcards import DevCardType
+    from catanlab.resources import Resource
+    from catanlab.search import (
+        apply_search_monopoly_outcome,
+    )
+
+    state = make_search_state()
+
+    player = state.players[0]
+
+    player.dev_cards.append(
+        DevCardType.MONOPOLY.value
+    )
+
+    original_ore = (
+        state.inventories[0].count(
+            Resource.ORE
+        )
+    )
+
+    result = apply_search_monopoly_outcome(
+        state,
+        0,
+        Resource.ORE,
+        3,
+    )
+
+    assert (
+        result.inventories[0].count(
+            Resource.ORE
+        )
+        == original_ore + 3
+    )
+
+    assert (
+        state.inventories[0].count(
+            Resource.ORE
+        )
+        == original_ore
+    )
+
+    assert (
+        DevCardType.MONOPOLY.value
+        not in result.players[0].dev_cards
+    )
+
+    assert (
+        DevCardType.MONOPOLY.value
+        in state.players[0].dev_cards
+    )
+
+    assert (
+        DevCardType.MONOPOLY.value
+        in result.players[0].played_dev_cards
+    )

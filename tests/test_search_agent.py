@@ -1402,3 +1402,271 @@ def test_road_building_search_enables_settlement():
     )
 
     assert ordinary.action.vertex_id == 2
+
+
+def test_monopoly_search_prefers_resource_that_enables_city():
+    from catanlab.board import Board, Tile, Vertex
+    from catanlab.devcard_policy import DevCardPhase
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import ActionType
+
+    (
+        _,
+        _,
+        _,
+        deck,
+        bank,
+    ) = make_state()
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+        ],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+        dev_cards=[
+            DevCardType.MONOPOLY.value
+        ],
+    )
+
+    opponent = PlayerState(
+        player_id=1,
+        settlements=[1],
+    )
+
+    players = [
+        player,
+        opponent,
+    ]
+
+    own_inventory = PlayerInventory()
+
+    # City requires 2 wheat + 3 ore.
+    # We already have wheat and one ore.
+    own_inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+    own_inventory.add(
+        Resource.ORE,
+        1,
+    )
+
+    opponent_inventory = PlayerInventory()
+
+    # Only the hand SIZE should matter to search.
+    # Actual hidden composition deliberately disagrees
+    # with the public production-based belief.
+    opponent_inventory.add(
+        Resource.WOOD,
+        2,
+    )
+
+    inventories = [
+        own_inventory,
+        opponent_inventory,
+    ]
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=False,
+        search_year_of_plenty=False,
+        search_road_building=False,
+        search_monopoly=True,
+    )
+
+    decision = agent.choose_dev_card_play(
+        board,
+        players,
+        player,
+        inventories,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert (
+        decision.card
+        == DevCardType.MONOPOLY
+    )
+
+    assert decision.resource == Resource.ORE
+
+    from catanlab.search import (
+        apply_search_monopoly_outcome,
+    )
+
+    after_monopoly = (
+        apply_search_monopoly_outcome(
+            agent._make_search_state(
+                board,
+                players,
+                player,
+                own_inventory,
+                deck,
+                bank,
+            ),
+            0,
+            Resource.ORE,
+            2,
+        )
+    )
+
+    ordinary = agent.evaluate_actions(
+        after_monopoly.board,
+        after_monopoly.players,
+        after_monopoly.players[0],
+        after_monopoly.inventories[0],
+        after_monopoly.dev_deck,
+        after_monopoly.bank,
+    )
+
+    assert (
+        ordinary.action.action_type
+        == ActionType.BUILD_CITY
+    )
+
+
+def test_monopoly_search_ignores_opponent_hidden_composition():
+    from catanlab.board import Board, Tile, Vertex
+    from catanlab.devcard_policy import DevCardPhase
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+
+    (
+        _,
+        _,
+        _,
+        deck,
+        bank,
+    ) = make_state()
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+        ],
+        edges=[],
+    )
+
+    def make_world(hidden_resource):
+        player = PlayerState(
+            player_id=0,
+            settlements=[0],
+            dev_cards=[
+                DevCardType.MONOPOLY.value
+            ],
+        )
+
+        opponent = PlayerState(
+            player_id=1,
+            settlements=[1],
+        )
+
+        own = PlayerInventory()
+        own.add(Resource.WHEAT, 2)
+        own.add(Resource.ORE, 1)
+
+        hidden = PlayerInventory()
+        hidden.add(hidden_resource, 2)
+
+        return (
+            [player, opponent],
+            [own, hidden],
+        )
+
+    players_a, inventories_a = (
+        make_world(Resource.WOOD)
+    )
+
+    players_b, inventories_b = (
+        make_world(Resource.ORE)
+    )
+
+    agent_a = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=False,
+        search_year_of_plenty=False,
+        search_road_building=False,
+        search_monopoly=True,
+    )
+
+    agent_b = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=False,
+        search_year_of_plenty=False,
+        search_road_building=False,
+        search_monopoly=True,
+    )
+
+    decision_a = agent_a.choose_dev_card_play(
+        board,
+        players_a,
+        players_a[0],
+        inventories_a,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    decision_b = agent_b.choose_dev_card_play(
+        board,
+        players_b,
+        players_b[0],
+        inventories_b,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert decision_a == decision_b

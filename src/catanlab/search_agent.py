@@ -6,9 +6,11 @@ from catanlab.search import (
     SearchState,
     apply_search_action,
     apply_search_dev_card_outcome,
+    apply_search_monopoly_outcome,
     apply_search_road_building,
     apply_search_year_of_plenty,
     build_dev_card_belief,
+    build_monopoly_gain_belief,
     enumerate_search_actions,
     evaluate_search_state,
 )
@@ -84,6 +86,7 @@ class OneStepLookaheadAgent(
         search_maritime_trades: bool = True,
         search_year_of_plenty: bool = False,
         search_road_building: bool = True,
+        search_monopoly: bool = False,
     ):
         super().__init__(strategy)
 
@@ -104,6 +107,9 @@ class OneStepLookaheadAgent(
         )
         self.search_road_building = (
             search_road_building
+        )
+        self.search_monopoly = (
+            search_monopoly
         )
 
         self._evaluation_cache = {}
@@ -582,6 +588,7 @@ class OneStepLookaheadAgent(
         if (
             not self.search_year_of_plenty
             and not self.search_road_building
+            and not self.search_monopoly
         ):
             return baseline
 
@@ -603,6 +610,133 @@ class OneStepLookaheadAgent(
 
         if dev_deck is None or bank is None:
             return baseline
+
+        # ------------------------------------------------
+        # Monopoly
+        # ------------------------------------------------
+
+        # For this first Monopoly-search version, only
+        # replace an established heuristic Monopoly play.
+        #
+        # This deliberately avoids interfering with the
+        # already-validated Road Building search when the
+        # heuristic prefers another card or chooses HOLD.
+        if (
+            self.search_monopoly
+            and baseline.card
+            == DevCardType.MONOPOLY
+        ):
+            belief = build_monopoly_gain_belief(
+                board,
+                players,
+                inventories,
+                player.player_id,
+            )
+
+            self._evaluation_cache = {}
+            self._search_cache = {}
+            self.cache_hits = 0
+            self.cache_misses = 0
+
+            state = self._make_search_state(
+                board,
+                players,
+                player,
+                inventories[player.player_id],
+                dev_deck,
+                bank,
+            )
+
+            # HOLD preserves the Monopoly card.
+            (
+                hold_value,
+                _,
+            ) = self._search_line(
+                state,
+                player.player_id,
+                self.search_depth,
+            )
+
+            resources = (
+                Resource.WOOD,
+                Resource.BRICK,
+                Resource.SHEEP,
+                Resource.WHEAT,
+                Resource.ORE,
+            )
+
+            candidates = []
+
+            for resource in resources:
+                distribution = belief[
+                    resource
+                ]
+
+                expected_value = 0.0
+
+                for (
+                    collected,
+                    probability,
+                ) in distribution.items():
+                    if probability <= 0.0:
+                        continue
+
+                    outcome_state = (
+                        apply_search_monopoly_outcome(
+                            state,
+                            player.player_id,
+                            resource,
+                            collected,
+                        )
+                    )
+
+                    (
+                        outcome_value,
+                        _,
+                    ) = self._search_line(
+                        outcome_state,
+                        player.player_id,
+                        self.search_depth,
+                    )
+
+                    expected_value += (
+                        probability
+                        * outcome_value
+                    )
+
+                candidates.append(
+                    (
+                        expected_value,
+                        resource.value,
+                        resource,
+                    )
+                )
+
+            candidates.sort(
+                key=lambda item: (
+                    -item[0],
+                    item[1],
+                )
+            )
+
+            (
+                best_play_value,
+                _,
+                best_resource,
+            ) = candidates[0]
+
+            # Preserve the card on a tie.
+            if best_play_value <= hold_value:
+                return DevCardDecision(
+                    card=None,
+                    utility=hold_value,
+                )
+
+            return DevCardDecision(
+                card=DevCardType.MONOPOLY,
+                utility=best_play_value,
+                resource=best_resource,
+            )
 
         # ------------------------------------------------
         # Year of Plenty

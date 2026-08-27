@@ -145,3 +145,42 @@ Possible future agents include:
 - opponent-aware agents
 
 The benchmark infrastructure provides a common evaluation framework for comparing these future agents with the fixed heuristic baseline.
+
+<!-- SEARCH-BASELINE:START -->
+## Search-agent baseline
+
+CatanLab includes a depth-n same-turn expectimax agent,
+`OneStepLookaheadAgent`, layered on top of the adaptive strategy policy.
+
+The current validated configuration is:
+
+- depth 2
+- maritime-trade search enabled
+- Road Building search enabled
+- Year of Plenty search disabled
+- Monopoly search disabled
+- transposition cache disabled
+- specialized fast search-state cloning enabled
+
+In a 400-pair benchmark against `AdaptiveStrategyAgent`, with
+`FIVE_RESOURCE` as the target strategy and the target rotated through all four
+seats against `HYBRID_OWS`, `FULL_OWS`, and `PORT`:
+
+| Metric | Adaptive | Search | Paired delta |
+| --- | ---: | ---: | ---: |
+| Win rate | 21.50% | 45.75% | +24.25 pp |
+| Mean VP | 6.8625 | 8.3650 | +1.5025 |
+| Roads | 11.980 | 9.175 | -2.805 |
+| Settlements | 2.600 | 3.285 | +0.685 |
+| Cities | 1.3925 | 1.7725 | +0.380 |
+| Dev cards | 3.2000 | 3.8025 | +0.6025 |
+| Runtime | 1.6677 s | 2.0634 s | +0.3957 s |
+
+The search-agent win-rate and VP improvements were positive in every target
+seat.
+
+See [`docs/search_baseline.md`](docs/search_baseline.md) for search design,
+information-safety constraints, optimization results, corrected maritime
+results, development-card ablations, confidence intervals, and seat-level
+analysis.
+<!-- SEARCH-BASELINE:END -->

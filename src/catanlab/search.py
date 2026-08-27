@@ -128,6 +128,143 @@ def disable_clone_profile() -> None:
     _clone_profile_enabled = False
 
 
+def build_monopoly_gain_belief(
+    board,
+    players,
+    inventories,
+    player_id: int,
+):
+    """
+    Estimate a probability distribution over the number
+    of cards Monopoly would collect for each resource.
+
+    This intentionally uses only public information:
+    opponent hand sizes and visible production profiles.
+    Opponent hidden resource identities are never read.
+    """
+    from math import comb
+
+    from catanlab.resources import Resource
+    from catanlab.scoring import resource_production
+
+    resources = (
+        Resource.WOOD,
+        Resource.BRICK,
+        Resource.SHEEP,
+        Resource.WHEAT,
+        Resource.ORE,
+    )
+
+    # Start each resource with certainty of collecting 0.
+    beliefs = {
+        resource: {0: 1.0}
+        for resource in resources
+    }
+
+    for other in players:
+        if other.player_id == player_id:
+            continue
+
+        # Hand size is public. Do not inspect individual
+        # resource counts.
+        hand_size = inventories[
+            other.player_id
+        ].total()
+
+        if hand_size <= 0:
+            continue
+
+        production = {
+            resource: 0.0
+            for resource in resources
+        }
+
+        for vertex_id in other.settlements:
+            vertex_production = (
+                resource_production(
+                    board,
+                    board.vertices[vertex_id],
+                )
+            )
+
+            for resource in resources:
+                production[resource] += (
+                    vertex_production[resource]
+                )
+
+        for vertex_id in other.cities:
+            vertex_production = (
+                resource_production(
+                    board,
+                    board.vertices[vertex_id],
+                )
+            )
+
+            for resource in resources:
+                production[resource] += (
+                    2.0
+                    * vertex_production[resource]
+                )
+
+        total_production = sum(
+            production.values()
+        )
+
+        if total_production <= 0:
+            continue
+
+        for resource in resources:
+            p = (
+                production[resource]
+                / total_production
+            )
+
+            # Estimated count of this resource in this
+            # opponent's hand follows Binomial(n, p).
+            local = {}
+
+            for count in range(
+                hand_size + 1
+            ):
+                probability = (
+                    comb(hand_size, count)
+                    * (p ** count)
+                    * (
+                        (1.0 - p)
+                        ** (hand_size - count)
+                    )
+                )
+
+                if probability > 0.0:
+                    local[count] = probability
+
+            # Convolve this opponent's distribution with
+            # the distribution accumulated so far.
+            combined = {}
+
+            for old_count, old_prob in (
+                beliefs[resource].items()
+            ):
+                for new_count, new_prob in (
+                    local.items()
+                ):
+                    total_count = (
+                        old_count + new_count
+                    )
+
+                    combined[total_count] = (
+                        combined.get(
+                            total_count,
+                            0.0,
+                        )
+                        + old_prob * new_prob
+                    )
+
+            beliefs[resource] = combined
+
+    return beliefs
+
+
 @dataclass
 class SearchState:
     """
@@ -521,6 +658,61 @@ def apply_search_dev_card_outcome(
     player.new_dev_cards.append(
         card.value
     )
+
+    return cloned
+
+
+def apply_search_monopoly_outcome(
+    state: SearchState,
+    player_id: int,
+    resource,
+    collected: int,
+) -> SearchState:
+    """
+    Apply one hypothetical Monopoly outcome without
+    revealing opponent resource identities.
+
+    `collected` comes from the public-information
+    Monopoly belief, not from hidden opponent hands.
+    """
+    from catanlab.devcards import (
+        DevCardType,
+        has_playable_dev_card,
+    )
+
+    if collected < 0:
+        raise ValueError(
+            "Monopoly collection cannot be negative."
+        )
+
+    cloned = (
+        state.fast_clone_for_ordinary_search()
+    )
+
+    player = cloned.players[player_id]
+
+    if not has_playable_dev_card(
+        player,
+        DevCardType.MONOPOLY,
+    ):
+        raise ValueError(
+            "Player does not have a playable "
+            "Monopoly card."
+        )
+
+    card = DevCardType.MONOPOLY.value
+
+    player.dev_cards.remove(card)
+
+    if collected:
+        cloned.inventories[
+            player_id
+        ].add(
+            resource,
+            collected,
+        )
+
+    player.played_dev_cards.append(card)
 
     return cloned
 
