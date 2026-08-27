@@ -1,0 +1,3 @@
+variant,games,avg_runtime_seconds,median_runtime_seconds
+cached,20,1.9021467062178998,1.9121201047673821
+uncached,20,1.8935387290548533,1.883166478946805

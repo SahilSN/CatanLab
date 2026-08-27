@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import time
 
 from catanlab.board import Board
 from catanlab.devcards import DevCardDeck
@@ -97,6 +98,36 @@ def build_dev_card_belief(
     )
 
 
+_clone_profile_enabled = False
+_clone_profile_calls = 0
+_clone_profile_seconds = 0.0
+
+
+def reset_clone_profile(
+    enabled: bool = True,
+) -> None:
+    global _clone_profile_enabled
+    global _clone_profile_calls
+    global _clone_profile_seconds
+
+    _clone_profile_enabled = enabled
+    _clone_profile_calls = 0
+    _clone_profile_seconds = 0.0
+
+
+def get_clone_profile() -> tuple[int, float]:
+    return (
+        _clone_profile_calls,
+        _clone_profile_seconds,
+    )
+
+
+def disable_clone_profile() -> None:
+    global _clone_profile_enabled
+
+    _clone_profile_enabled = False
+
+
 @dataclass
 class SearchState:
     """
@@ -112,20 +143,118 @@ class SearchState:
     dev_deck: DevCardDeck
     bank: ResourceBank
 
+    def deep_clone(self) -> "SearchState":
+        """
+        Reference clone using deepcopy.
+
+        Retained for equivalence testing of the
+        specialized search clone.
+        """
+        return deepcopy(self)
+
+    def fast_clone_for_ordinary_search(
+        self,
+    ) -> "SearchState":
+        """
+        Clone only state that ordinary search actions
+        can mutate.
+
+        Board topology and board configuration are
+        shared because the current search action set
+        does not mutate Board.
+
+        If search later gains an action that moves the
+        robber or otherwise mutates Board, this method
+        must be revisited.
+        """
+        global _clone_profile_calls
+        global _clone_profile_seconds
+
+        start = (
+            time.perf_counter()
+            if _clone_profile_enabled
+            else None
+        )
+
+        players = [
+            PlayerState(
+                player_id=player.player_id,
+                settlements=list(
+                    player.settlements
+                ),
+                cities=list(
+                    player.cities
+                ),
+                roads=list(
+                    player.roads
+                ),
+                dev_cards=list(
+                    player.dev_cards
+                ),
+                new_dev_cards=list(
+                    player.new_dev_cards
+                ),
+                played_dev_cards=list(
+                    player.played_dev_cards
+                ),
+                knights_played=(
+                    player.knights_played
+                ),
+                has_largest_army=(
+                    player.has_largest_army
+                ),
+                has_longest_road=(
+                    player.has_longest_road
+                ),
+            )
+            for player in self.players
+        ]
+
+        inventories = [
+            PlayerInventory(
+                resources=(
+                    inventory.resources.copy()
+                )
+            )
+            for inventory in self.inventories
+        ]
+
+        cloned = SearchState(
+            # Intentionally shared: ordinary search
+            # actions only read Board.
+            board=self.board,
+            players=players,
+            inventories=inventories,
+            dev_deck=DevCardDeck(
+                cards=list(
+                    self.dev_deck.cards
+                )
+            ),
+            bank=ResourceBank(
+                resources=(
+                    self.bank.resources.copy()
+                )
+            ),
+        )
+
+        if start is not None:
+            _clone_profile_calls += 1
+            _clone_profile_seconds += (
+                time.perf_counter() - start
+            )
+
+        return cloned
+
     def clone(self) -> "SearchState":
         """
         Return a fully independent copy of this state.
 
-        deepcopy is intentionally used for the first
-        search implementation. The simulator state is
-        composed of ordinary dataclasses, lists,
-        Counters, enums, and primitive values.
-
-        A specialized faster clone can be introduced
-        later if profiling shows cloning is a search
-        bottleneck.
+        This is the general-purpose clone contract.
+        Board is copied as well, so hypothetical robber
+        mutations cannot affect the source state.
         """
         return deepcopy(self)
+
 
 
 def clone_search_state(
@@ -140,6 +269,7 @@ def clone_search_state(
 def enumerate_search_actions(
     state: SearchState,
     player_id: int,
+    include_maritime_trades: bool = False,
 ) -> list["TurnAction"]:
     """
     Enumerate deterministic ordinary actions that can
@@ -225,6 +355,50 @@ def enumerate_search_actions(
             )
         )
 
+    if include_maritime_trades:
+        from catanlab.ports import (
+            best_maritime_ratio,
+        )
+        from catanlab.resources import Resource
+
+        resources = (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        )
+
+        for give in resources:
+            ratio = best_maritime_ratio(
+                state.board,
+                player,
+                give,
+            )
+
+            if inventory.count(give) < ratio:
+                continue
+
+            for receive in resources:
+                if receive == give:
+                    continue
+
+                if not state.bank.can_supply(
+                    receive,
+                    1,
+                ):
+                    continue
+
+                actions.append(
+                    TurnAction(
+                        action_type=(
+                            ActionType.MARITIME_TRADE
+                        ),
+                        give_resource=give,
+                        receive_resource=receive,
+                    )
+                )
+
     actions.append(
         TurnAction(
             action_type=ActionType.PASS
@@ -254,7 +428,9 @@ def apply_search_action(
         execute_action,
     )
 
-    cloned = state.clone()
+    cloned = (
+        state.fast_clone_for_ordinary_search()
+    )
 
     player = cloned.players[player_id]
     inventory = cloned.inventories[player_id]
@@ -317,7 +493,9 @@ def apply_search_dev_card_outcome(
     """
     from catanlab.economy import BuildType
 
-    cloned = state.clone()
+    cloned = (
+        state.fast_clone_for_ordinary_search()
+    )
 
     if not cloned.dev_deck.cards:
         raise ValueError(

@@ -7,7 +7,9 @@ from catanlab.economy import (
 from catanlab.resources import Resource
 from catanlab.search import (
     SearchState,
+    apply_search_action,
     clone_search_state,
+    enumerate_search_actions,
 )
 from catanlab.simulation import PlayerState
 
@@ -814,3 +816,306 @@ def test_search_dev_outcome_consumes_one_deck_slot():
     assert len(
         state.dev_deck.cards
     ) == before
+
+
+def test_fast_search_clone_matches_deep_clone_state():
+    original = make_search_state()
+
+    fast = original.fast_clone_for_ordinary_search()
+    deep = original.clone()
+
+    assert fast.players == deep.players
+    assert fast.inventories == deep.inventories
+    assert fast.dev_deck == deep.dev_deck
+    assert fast.bank == deep.bank
+
+    # Board is intentionally shared only by the fast
+    # search clone.
+    assert fast.board is original.board
+    assert deep.board is not original.board
+
+
+def test_fast_search_clone_mutable_state_is_independent():
+    from catanlab.devcards import DevCardType
+    from catanlab.resources import Resource
+
+    original = make_search_state()
+    cloned = (
+        original.fast_clone_for_ordinary_search()
+    )
+
+    assert cloned.players is not original.players
+    assert (
+        cloned.inventories
+        is not original.inventories
+    )
+    assert (
+        cloned.dev_deck
+        is not original.dev_deck
+    )
+    assert cloned.bank is not original.bank
+
+    cloned.players[0].settlements.append(
+        999
+    )
+    cloned.players[0].roads.append(
+        (998, 999)
+    )
+    cloned.players[0].dev_cards.append(
+        DevCardType.KNIGHT.value
+    )
+
+    cloned.inventories[0].add(
+        Resource.WOOD,
+        1,
+    )
+
+    cloned.bank.remove(
+        Resource.BRICK,
+        1,
+    )
+
+    cloned.dev_deck.cards.pop()
+
+    assert (
+        999
+        not in original.players[0].settlements
+    )
+    assert (
+        (998, 999)
+        not in original.players[0].roads
+    )
+    assert (
+        DevCardType.KNIGHT.value
+        not in original.players[0].dev_cards
+    )
+
+    assert (
+        cloned.inventories[0].count(
+            Resource.WOOD
+        )
+        != original.inventories[0].count(
+            Resource.WOOD
+        )
+    )
+
+    assert (
+        cloned.bank.count(Resource.BRICK)
+        != original.bank.count(Resource.BRICK)
+    )
+
+    assert (
+        len(cloned.dev_deck.cards)
+        == len(original.dev_deck.cards) - 1
+    )
+
+
+def test_fast_clone_player_nested_lists_are_independent():
+    original = make_search_state()
+    cloned = (
+        original.fast_clone_for_ordinary_search()
+    )
+
+    for original_player, cloned_player in zip(
+        original.players,
+        cloned.players,
+    ):
+        assert (
+            cloned_player.settlements
+            is not original_player.settlements
+        )
+        assert (
+            cloned_player.cities
+            is not original_player.cities
+        )
+        assert (
+            cloned_player.roads
+            is not original_player.roads
+        )
+        assert (
+            cloned_player.dev_cards
+            is not original_player.dev_cards
+        )
+        assert (
+            cloned_player.new_dev_cards
+            is not original_player.new_dev_cards
+        )
+        assert (
+            cloned_player.played_dev_cards
+            is not original_player.played_dev_cards
+        )
+
+
+def test_search_maritime_trades_are_opt_in():
+    from catanlab.ports import best_maritime_ratio
+    from catanlab.resources import Resource
+    from catanlab.turns import ActionType
+
+    state = make_search_state()
+
+    player = state.players[0]
+    inventory = state.inventories[0]
+
+    inventory.resources.clear()
+
+    ratio = best_maritime_ratio(
+        state.board,
+        player,
+        Resource.WOOD,
+    )
+
+    inventory.add(
+        Resource.WOOD,
+        ratio,
+    )
+
+    without_trades = enumerate_search_actions(
+        state,
+        0,
+    )
+
+    with_trades = enumerate_search_actions(
+        state,
+        0,
+        include_maritime_trades=True,
+    )
+
+    assert all(
+        action.action_type
+        != ActionType.MARITIME_TRADE
+        for action in without_trades
+    )
+
+    trades = [
+        action
+        for action in with_trades
+        if (
+            action.action_type
+            == ActionType.MARITIME_TRADE
+        )
+    ]
+
+    assert trades
+
+    assert any(
+        action.give_resource == Resource.WOOD
+        and action.receive_resource == Resource.ORE
+        for action in trades
+    )
+
+
+def test_search_maritime_trade_respects_bank_supply():
+    from catanlab.ports import best_maritime_ratio
+    from catanlab.resources import Resource
+    from catanlab.turns import ActionType
+
+    state = make_search_state()
+
+    player = state.players[0]
+    inventory = state.inventories[0]
+
+    inventory.resources.clear()
+
+    ratio = best_maritime_ratio(
+        state.board,
+        player,
+        Resource.WOOD,
+    )
+
+    inventory.add(
+        Resource.WOOD,
+        ratio,
+    )
+
+    state.bank.resources[
+        Resource.ORE
+    ] = 0
+
+    actions = enumerate_search_actions(
+        state,
+        0,
+        include_maritime_trades=True,
+    )
+
+    assert not any(
+        action.action_type
+        == ActionType.MARITIME_TRADE
+        and action.receive_resource
+        == Resource.ORE
+        for action in actions
+    )
+
+
+def test_apply_search_maritime_trade_isolated():
+    from catanlab.ports import best_maritime_ratio
+    from catanlab.resources import Resource
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+    )
+
+    state = make_search_state()
+
+    player = state.players[0]
+    inventory = state.inventories[0]
+
+    inventory.resources.clear()
+
+    ratio = best_maritime_ratio(
+        state.board,
+        player,
+        Resource.WOOD,
+    )
+
+    inventory.add(
+        Resource.WOOD,
+        ratio,
+    )
+
+    original_wood = inventory.count(
+        Resource.WOOD
+    )
+    original_ore = inventory.count(
+        Resource.ORE
+    )
+
+    result = apply_search_action(
+        state,
+        0,
+        TurnAction(
+            action_type=(
+                ActionType.MARITIME_TRADE
+            ),
+            give_resource=Resource.WOOD,
+            receive_resource=Resource.ORE,
+        ),
+    )
+
+    assert (
+        result.inventories[0].count(
+            Resource.WOOD
+        )
+        == original_wood - ratio
+    )
+
+    assert (
+        result.inventories[0].count(
+            Resource.ORE
+        )
+        == original_ore + 1
+    )
+
+    # Original search state remains untouched.
+    assert (
+        state.inventories[0].count(
+            Resource.WOOD
+        )
+        == original_wood
+    )
+
+    assert (
+        state.inventories[0].count(
+            Resource.ORE
+        )
+        == original_ore
+    )

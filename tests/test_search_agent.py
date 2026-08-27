@@ -614,3 +614,274 @@ def test_public_dev_history_changes_buy_dev_expected_value():
         before_buy.value
         != after_buy.value
     )
+
+
+def test_search_cache_key_ignores_hidden_deck_order():
+    from catanlab.devcards import DevCardType
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+    )
+
+    state_a = agent._make_search_state(
+        board,
+        players,
+        players[0],
+        inventories[0],
+        deck,
+        bank,
+    )
+
+    state_b = state_a.clone()
+
+    state_a.dev_deck.cards[-1] = (
+        DevCardType.KNIGHT
+    )
+
+    state_b.dev_deck.cards[-1] = (
+        DevCardType.VICTORY_POINT
+    )
+
+    assert agent._state_key(
+        state_a,
+        0,
+    ) == agent._state_key(
+        state_b,
+        0,
+    )
+
+
+def test_search_cache_key_ignores_opponent_hidden_dev_identity():
+    from catanlab.devcards import DevCardType
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+    )
+
+    state_a = agent._make_search_state(
+        board,
+        players,
+        players[0],
+        inventories[0],
+        deck,
+        bank,
+    )
+
+    state_b = state_a.clone()
+
+    state_a.players[1].dev_cards = [
+        DevCardType.KNIGHT.value,
+    ]
+
+    state_b.players[1].dev_cards = [
+        DevCardType.VICTORY_POINT.value,
+    ]
+
+    assert agent._state_key(
+        state_a,
+        0,
+    ) == agent._state_key(
+        state_b,
+        0,
+    )
+
+
+def test_transposition_cache_preserves_search_result():
+    from catanlab.resources import Resource
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    # Give the player enough flexibility for multiple
+    # search branches and possible transpositions.
+    for resource in Resource:
+        if resource.value == "desert":
+            continue
+
+        inventories[0].add(
+            resource,
+            3,
+        )
+
+    cached = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=True,
+    )
+
+    uncached = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+    )
+
+    cached_decision = cached.evaluate_actions(
+        board,
+        players,
+        players[0],
+        inventories[0],
+        deck,
+        bank,
+    )
+
+    uncached_decision = uncached.evaluate_actions(
+        board,
+        players,
+        players[0],
+        inventories[0],
+        deck,
+        bank,
+    )
+
+    assert (
+        cached_decision.action
+        == uncached_decision.action
+    )
+
+    assert (
+        cached_decision.value
+        == uncached_decision.value
+    )
+
+    assert (
+        cached_decision.principal_variation
+        == uncached_decision.principal_variation
+    )
+
+    assert len(
+        cached_decision.candidates
+    ) == len(
+        uncached_decision.candidates
+    )
+
+    for cached_candidate, uncached_candidate in zip(
+        cached_decision.candidates,
+        uncached_decision.candidates,
+    ):
+        assert (
+            cached_candidate.action
+            == uncached_candidate.action
+        )
+
+        assert (
+            cached_candidate.value
+            == uncached_candidate.value
+        )
+
+
+def test_depth_two_search_uses_maritime_trade_to_enable_city():
+    from catanlab.economy import PlayerInventory
+    from catanlab.ports import best_maritime_ratio
+    from catanlab.resources import Resource
+    from catanlab.turns import ActionType
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    player = players[0]
+
+    # Give the player one existing settlement so a city
+    # upgrade is a legal candidate.
+    player.settlements.append(
+        board.vertices[0].id
+    )
+
+    inventory = PlayerInventory()
+
+    # City costs 2 wheat + 3 ore.
+    #
+    # Start exactly one ore short, while holding enough
+    # surplus wood for one maritime trade.
+    inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+
+    inventory.add(
+        Resource.ORE,
+        2,
+    )
+
+    ratio = best_maritime_ratio(
+        board,
+        player,
+        Resource.WOOD,
+    )
+
+    inventory.add(
+        Resource.WOOD,
+        ratio,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=True,
+    )
+
+    decision = agent.evaluate_actions(
+        board,
+        players,
+        player,
+        inventory,
+        deck,
+        bank,
+    )
+
+    assert (
+        decision.action.action_type
+        == ActionType.MARITIME_TRADE
+    )
+
+    assert (
+        decision.action.give_resource
+        == Resource.WOOD
+    )
+
+    assert (
+        decision.action.receive_resource
+        == Resource.ORE
+    )
+
+    assert len(
+        decision.principal_variation
+    ) >= 2
+
+    assert (
+        decision.principal_variation[0].action_type
+        == ActionType.MARITIME_TRADE
+    )
+
+    assert (
+        decision.principal_variation[1].action_type
+        == ActionType.BUILD_CITY
+    )

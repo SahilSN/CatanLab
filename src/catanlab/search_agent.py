@@ -78,6 +78,8 @@ class OneStepLookaheadAgent(
         self,
         strategy,
         search_depth: int = 1,
+        use_transposition_cache: bool = True,
+        search_maritime_trades: bool = False,
     ):
         super().__init__(strategy)
 
@@ -87,6 +89,147 @@ class OneStepLookaheadAgent(
             )
 
         self.search_depth = search_depth
+        self.use_transposition_cache = (
+            use_transposition_cache
+        )
+        self.search_maritime_trades = (
+            search_maritime_trades
+        )
+
+        self._evaluation_cache = {}
+        self._search_cache = {}
+
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    @staticmethod
+    def _state_key(
+        state: SearchState,
+        player_id: int,
+    ) -> tuple:
+        """
+        Return an information-safe immutable key for
+        search-equivalent states.
+
+        Hidden development-card identities belonging
+        to opponents and the hidden deck order are
+        deliberately excluded.
+        """
+        from catanlab.economy import (
+            PRODUCING_RESOURCES,
+        )
+
+        player_keys = []
+
+        for index, player in enumerate(
+            state.players
+        ):
+            if index == player_id:
+                dev_cards = tuple(
+                    sorted(player.dev_cards)
+                )
+                new_dev_cards = tuple(
+                    sorted(player.new_dev_cards)
+                )
+            else:
+                # Opponent identities are private.
+                # Only the publicly observable count
+                # may influence the cache key.
+                dev_cards = (
+                    len(player.dev_cards),
+                )
+                new_dev_cards = ()
+
+            roads = tuple(
+                sorted(
+                    tuple(sorted(edge))
+                    for edge in player.roads
+                )
+            )
+
+            player_keys.append(
+                (
+                    player.player_id,
+                    tuple(
+                        sorted(
+                            player.settlements
+                        )
+                    ),
+                    tuple(
+                        sorted(player.cities)
+                    ),
+                    roads,
+                    dev_cards,
+                    new_dev_cards,
+                    tuple(
+                        sorted(
+                            player.played_dev_cards
+                        )
+                    ),
+                    player.knights_played,
+                    player.has_largest_army,
+                    player.has_longest_road,
+                )
+            )
+
+        inventory_keys = tuple(
+            tuple(
+                inventory.count(resource)
+                for resource
+                in PRODUCING_RESOURCES
+            )
+            for inventory in state.inventories
+        )
+
+        bank_key = tuple(
+            state.bank.count(resource)
+            for resource in PRODUCING_RESOURCES
+        )
+
+        return (
+            tuple(player_keys),
+            inventory_keys,
+            bank_key,
+
+            # Deck size is public/useful. Its hidden
+            # identities and ordering are not.
+            len(state.dev_deck.cards),
+        )
+
+    def _evaluate_state(
+        self,
+        state: SearchState,
+        player_id: int,
+    ) -> float:
+        """
+        Evaluate a leaf, reusing an equivalent leaf
+        value when caching is enabled.
+        """
+        if not self.use_transposition_cache:
+            return evaluate_search_state(
+                state,
+                player_id,
+            )
+
+        key = self._state_key(
+            state,
+            player_id,
+        )
+
+        if key in self._evaluation_cache:
+            self.cache_hits += 1
+            return self._evaluation_cache[key]
+
+        self.cache_misses += 1
+
+        value = evaluate_search_state(
+            state,
+            player_id,
+        )
+
+        self._evaluation_cache[key] = value
+
+        return value
 
     @staticmethod
     def _empty_inventory():
@@ -175,7 +318,7 @@ class OneStepLookaheadAgent(
 
                 if depth <= 1:
                     outcome_value = (
-                        evaluate_search_state(
+                        self._evaluate_state(
                             outcome_state,
                             player_id,
                         )
@@ -216,7 +359,7 @@ class OneStepLookaheadAgent(
             or depth <= 1
         ):
             return (
-                evaluate_search_state(
+                self._evaluate_state(
                     next_state,
                     player_id,
                 ),
@@ -240,16 +383,38 @@ class OneStepLookaheadAgent(
     ]:
         if depth <= 0:
             return (
-                evaluate_search_state(
+                self._evaluate_state(
                     state,
                     player_id,
                 ),
                 (),
             )
 
+        cache_key = None
+
+        if self.use_transposition_cache:
+            cache_key = (
+                depth,
+                self._state_key(
+                    state,
+                    player_id,
+                ),
+            )
+
+            if cache_key in self._search_cache:
+                self.cache_hits += 1
+                return self._search_cache[
+                    cache_key
+                ]
+
+            self.cache_misses += 1
+
         actions = enumerate_search_actions(
             state,
             player_id,
+            include_maritime_trades=(
+                self.search_maritime_trades
+            ),
         )
 
         candidates = []
@@ -291,13 +456,23 @@ class OneStepLookaheadAgent(
             continuation,
         ) = candidates[0]
 
-        return (
+        result = (
             value,
             (
                 action,
                 *continuation,
             ),
         )
+
+        if (
+            self.use_transposition_cache
+            and cache_key is not None
+        ):
+            self._search_cache[
+                cache_key
+            ] = result
+
+        return result
 
     def evaluate_actions(
         self,
@@ -308,6 +483,14 @@ class OneStepLookaheadAgent(
         dev_deck,
         bank,
     ) -> SearchDecision:
+        # Search caches are deliberately scoped to one
+        # decision. Live game state may change between
+        # calls, so nothing persists across turns.
+        self._evaluation_cache = {}
+        self._search_cache = {}
+        self.cache_hits = 0
+        self.cache_misses = 0
+
         state = self._make_search_state(
             board,
             players,
@@ -320,6 +503,9 @@ class OneStepLookaheadAgent(
         actions = enumerate_search_actions(
             state,
             player_id=player.player_id,
+            include_maritime_trades=(
+                self.search_maritime_trades
+            ),
         )
 
         candidates = []
