@@ -30,6 +30,15 @@ class PlayerState:
         default_factory=list
     )
 
+    # Action development cards that have been
+    # publicly played during the game.
+    #
+    # Victory-point cards never enter this list
+    # because they remain hidden until game end.
+    played_dev_cards: list[str] = field(
+        default_factory=list
+    )
+
     knights_played: int = 0
     has_largest_army: bool = False
     has_longest_road: bool = False

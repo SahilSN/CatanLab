@@ -25,6 +25,7 @@ from catanlab.simulation import (
 from catanlab.strategies import StrategyType
 from catanlab.turns import (
     AdaptiveStrategyAgent,
+    TurnAgent,
     TurnResult,
     run_turn,
 )
@@ -75,6 +76,7 @@ def _setup_game_with_bank(
     strategies: list[StrategyType],
     board_seed: int | None = None,
     dev_seed: int | None = None,
+    turn_agents: list[TurnAgent] | None = None,
 ):
     """
     Create a four-player game and complete setup.
@@ -119,12 +121,20 @@ def _setup_game_with_bank(
         bank=bank,
     )
 
-    turn_agents = [
-        AdaptiveStrategyAgent(
-            strategy
+    if turn_agents is None:
+        turn_agents = [
+            AdaptiveStrategyAgent(
+                strategy
+            )
+            for strategy in strategies
+        ]
+    elif len(turn_agents) != 4:
+        raise ValueError(
+            "A Catan game requires exactly "
+            "four turn agents."
         )
-        for strategy in strategies
-    ]
+    else:
+        turn_agents = list(turn_agents)
 
     dev_deck = build_dev_card_deck(
         seed=dev_seed
@@ -145,6 +155,7 @@ def setup_game(
     strategies: list[StrategyType],
     board_seed: int | None = None,
     dev_seed: int | None = None,
+    turn_agents: list[TurnAgent] | None = None,
 ):
     """
     Public setup API.
@@ -163,6 +174,7 @@ def setup_game(
         strategies,
         board_seed=board_seed,
         dev_seed=dev_seed,
+        turn_agents=turn_agents,
     )
 
     return (
@@ -196,6 +208,7 @@ def run_game(
     seed: int | None = None,
     max_turns: int = 2000,
     validate_conservation: bool = False,
+    turn_agents: list[TurnAgent] | None = None,
 ) -> GameResult:
     """
     Run one complete four-player Catan game.
@@ -227,6 +240,7 @@ def run_game(
         strategies,
         board_seed=board_seed,
         dev_seed=dev_seed,
+        turn_agents=turn_agents,
     )
 
     players = draft.players

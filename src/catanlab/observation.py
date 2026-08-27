@@ -26,6 +26,8 @@ class PublicPlayerState:
     resource_card_count: int
     dev_card_count: int
 
+    played_dev_cards: tuple[str, ...]
+
     knights_played: int
 
     has_largest_army: bool
@@ -90,6 +92,9 @@ def public_player_state(
         ),
         dev_card_count=len(
             player.dev_cards
+        ),
+        played_dev_cards=tuple(
+            player.played_dev_cards
         ),
         knights_played=(
             player.knights_played

@@ -169,6 +169,7 @@ def test_public_view_is_immutable():
         roads=(),
         resource_card_count=4,
         dev_card_count=2,
+        played_dev_cards=(),
         knights_played=0,
         has_largest_army=False,
         has_longest_road=False,
@@ -210,3 +211,48 @@ def test_observation_rejects_mismatched_state_lengths():
             "Expected mismatched player/inventory "
             "lists to be rejected."
         )
+
+
+def test_played_dev_card_history_is_public():
+    players = [
+        PlayerState(
+            player_id=0,
+        ),
+        PlayerState(
+            player_id=1,
+            dev_cards=[
+                DevCardType.MONOPOLY.value,
+                DevCardType.VICTORY_POINT.value,
+            ],
+            played_dev_cards=[
+                DevCardType.KNIGHT.value,
+                DevCardType.YEAR_OF_PLENTY.value,
+            ],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    observation = player_observation(
+        players,
+        inventories,
+        player_id=0,
+    )
+
+    opponent = observation.opponent(1)
+
+    assert opponent.dev_card_count == 2
+
+    assert opponent.played_dev_cards == (
+        DevCardType.KNIGHT.value,
+        DevCardType.YEAR_OF_PLENTY.value,
+    )
+
+    # Unplayed identities remain hidden.
+    assert not hasattr(
+        opponent,
+        "dev_cards",
+    )

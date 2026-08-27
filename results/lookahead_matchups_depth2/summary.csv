@@ -1,0 +1,11 @@
+matchup,variant,games,win_rate,avg_vp,avg_roads,avg_settlements,avg_cities,avg_dev_cards,longest_road_rate,largest_army_rate
+full_road_port,baseline,400,0.24,6.98,11.1025,2.02,1.7225,4.5425,0.1975,0.0
+full_road_port,lookahead,400,0.29,7.3125,7.945,2.47,1.675,4.415,0.1825,0.0
+hybrid_full_port,baseline,400,0.26,7.18,12.34,2.6175,1.4225,3.2525,0.3875,0.0
+hybrid_full_port,lookahead,400,0.31,7.46,9.885,3.3875,1.305,2.95,0.36,0.0
+hybrid_road_roadscity,baseline,400,0.1575,6.5975,10.975,2.33,1.38,4.335,0.2075,0.0
+hybrid_road_roadscity,lookahead,400,0.2125,6.935,7.88,2.935,1.2975,4.335,0.1675,0.0
+road_roadscity_port,baseline,400,0.2975,7.3775,11.7575,1.9325,1.8275,5.435,0.2125,0.0
+road_roadscity_port,lookahead,400,0.365,7.855,8.3675,2.48,1.8325,5.395,0.1425,0.0
+roadscity_port_hybrid,baseline,400,0.1975,6.74,12.0325,2.49,1.3775,3.7875,0.275,0.0
+roadscity_port_hybrid,lookahead,400,0.2625,7.1975,9.0125,3.15,1.2625,3.6675,0.295,0.0

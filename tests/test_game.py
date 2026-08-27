@@ -446,3 +446,110 @@ def test_setup_resources_come_from_second_settlement_only():
         )
 
         assert actual == expected
+
+def test_setup_game_uses_default_adaptive_agents():
+    from catanlab.game import setup_game
+    from catanlab.strategies import StrategyType
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    strategies = [
+        StrategyType.FULL_OWS,
+        StrategyType.HYBRID_OWS,
+        StrategyType.ROAD_BUILDING,
+        StrategyType.PORT,
+    ]
+
+    (
+        _,
+        _,
+        _,
+        agents,
+        _,
+    ) = setup_game(
+        strategies,
+        board_seed=1,
+        dev_seed=2,
+    )
+
+    assert len(agents) == 4
+    assert all(
+        isinstance(
+            agent,
+            AdaptiveStrategyAgent,
+        )
+        for agent in agents
+    )
+
+
+def test_setup_game_accepts_custom_turn_agents():
+    from catanlab.game import setup_game
+    from catanlab.strategies import StrategyType
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    strategies = [
+        StrategyType.FULL_OWS,
+        StrategyType.HYBRID_OWS,
+        StrategyType.ROAD_BUILDING,
+        StrategyType.PORT,
+    ]
+
+    custom_agents = [
+        AdaptiveStrategyAgent(strategy)
+        for strategy in strategies
+    ]
+
+    (
+        _,
+        _,
+        _,
+        agents,
+        _,
+    ) = setup_game(
+        strategies,
+        board_seed=1,
+        dev_seed=2,
+        turn_agents=custom_agents,
+    )
+
+    assert len(agents) == 4
+
+    assert all(
+        actual is expected
+        for actual, expected
+        in zip(
+            agents,
+            custom_agents,
+        )
+    )
+
+
+def test_setup_game_rejects_wrong_turn_agent_count():
+    import pytest
+
+    from catanlab.game import setup_game
+    from catanlab.strategies import StrategyType
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    strategies = [
+        StrategyType.FULL_OWS,
+        StrategyType.HYBRID_OWS,
+        StrategyType.ROAD_BUILDING,
+        StrategyType.PORT,
+    ]
+
+    agents = [
+        AdaptiveStrategyAgent(
+            StrategyType.FULL_OWS
+        )
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "exactly four turn agents"
+        ),
+    ):
+        setup_game(
+            strategies,
+            turn_agents=agents,
+        )

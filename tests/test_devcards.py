@@ -759,6 +759,10 @@ def test_road_building_places_two_roads():
         not in player.dev_cards
     )
 
+    assert player.played_dev_cards == [
+        DevCardType.ROAD_BUILDING.value
+    ]
+
 
 def test_road_building_second_road_can_extend_first():
     from catanlab.board import (
@@ -1372,4 +1376,131 @@ def test_knight_same_robber_tile_does_not_consume_card():
     assert (
         board.robber_tile_id
         == original_robber
+    )
+
+
+def test_play_knight_records_public_history():
+    from catanlab.devcards import (
+        DevCardType,
+        play_knight,
+    )
+    from catanlab.simulation import PlayerState
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.KNIGHT.value,
+        ],
+    )
+
+    play_knight(player)
+
+    assert player.played_dev_cards == [
+        DevCardType.KNIGHT.value
+    ]
+
+
+def test_year_of_plenty_records_public_history():
+    from catanlab.devcards import (
+        DevCardType,
+        play_year_of_plenty,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.YEAR_OF_PLENTY.value,
+        ],
+    )
+
+    inventory = PlayerInventory()
+
+    play_year_of_plenty(
+        player,
+        inventory,
+        Resource.WOOD,
+        Resource.BRICK,
+    )
+
+    assert player.played_dev_cards == [
+        DevCardType.YEAR_OF_PLENTY.value
+    ]
+
+
+def test_monopoly_records_public_history():
+    from catanlab.devcards import (
+        DevCardType,
+        play_monopoly,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.MONOPOLY.value,
+        ],
+    )
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.ORE,
+        2,
+    )
+
+    play_monopoly(
+        player,
+        inventories,
+        Resource.ORE,
+    )
+
+    assert player.played_dev_cards == [
+        DevCardType.MONOPOLY.value
+    ]
+
+
+def test_failed_road_building_does_not_record_history():
+    import pytest
+
+    from catanlab.board import build_random_board
+    from catanlab.devcards import (
+        DevCardType,
+        play_road_building,
+    )
+    from catanlab.simulation import PlayerState
+
+    board = build_random_board(seed=123)
+
+    players = [
+        PlayerState(player_id=i)
+        for i in range(4)
+    ]
+
+    player = players[0]
+
+    player.dev_cards.append(
+        DevCardType.ROAD_BUILDING.value
+    )
+
+    with pytest.raises(ValueError):
+        play_road_building(
+            player,
+            board,
+            players,
+            first_edge=(-1, -2),
+        )
+
+    assert player.played_dev_cards == []
+
+    assert (
+        DevCardType.ROAD_BUILDING.value
+        in player.dev_cards
     )

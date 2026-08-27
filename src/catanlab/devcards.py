@@ -154,6 +154,10 @@ def play_knight(
 
     player.knights_played += 1
 
+    player.played_dev_cards.append(
+        knight
+    )
+
 
 def update_largest_army(
     players,
@@ -591,6 +595,11 @@ def play_year_of_plenty(
         1,
     )
 
+    player.played_dev_cards.append(
+        card
+    )
+
+
 def play_monopoly(
     player,
     inventories,
@@ -645,6 +654,10 @@ def play_monopoly(
         )
 
         collected += amount
+
+    player.played_dev_cards.append(
+        card
+    )
 
     return collected
 
@@ -709,5 +722,9 @@ def play_road_building(
         raise
 
     player.dev_cards.remove(
+        card
+    )
+
+    player.played_dev_cards.append(
         card
     )
