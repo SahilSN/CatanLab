@@ -3234,3 +3234,229 @@ def test_trade_counteroffer_ignores_other_hidden_resource_composition():
     )
 
     assert counter_a == counter_b
+
+
+def test_dev_card_agent_can_receive_bank():
+    from catanlab.board import build_random_board
+    from catanlab.devcard_policy import (
+        DevCardDecision,
+    )
+    from catanlab.economy import ResourceBank
+    from catanlab.turns import TurnAgent
+
+    class BankAwareAgent(TurnAgent):
+        def __init__(self):
+            self.received_bank = None
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+            bank=None,
+        ):
+            self.received_bank = bank
+
+            return DevCardDecision(
+                card=None,
+                utility=0.0,
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+            bank=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = build_random_board(seed=901)
+    players = [
+        PlayerState(player_id=0)
+    ]
+    inventories = [
+        PlayerInventory()
+    ]
+    agent = BankAwareAgent()
+    bank = ResourceBank()
+
+    run_turn(
+        board,
+        players,
+        inventories,
+        [agent],
+        player_id=0,
+        roll=2,
+        bank=bank,
+    )
+
+    assert agent.received_bank is bank
+
+
+def test_dev_card_agent_can_receive_dev_deck():
+    from catanlab.board import build_random_board
+    from catanlab.devcard_policy import (
+        DevCardDecision,
+    )
+    from catanlab.devcards import (
+        build_dev_card_deck,
+    )
+    from catanlab.turns import TurnAgent
+
+    class DeckAwareAgent(TurnAgent):
+        def __init__(self):
+            self.received_deck = None
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+            dev_deck=None,
+        ):
+            self.received_deck = dev_deck
+
+            return DevCardDecision(
+                card=None,
+                utility=0.0,
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+            bank=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = build_random_board(seed=902)
+    players = [
+        PlayerState(player_id=0)
+    ]
+    inventories = [
+        PlayerInventory()
+    ]
+    agent = DeckAwareAgent()
+    deck = build_dev_card_deck(seed=902)
+
+    run_turn(
+        board,
+        players,
+        inventories,
+        [agent],
+        player_id=0,
+        roll=2,
+        dev_deck=deck,
+    )
+
+    assert agent.received_deck is deck
+
+
+def test_year_of_plenty_uses_explicit_resource_pair():
+    from catanlab.board import build_random_board
+    from catanlab.devcard_policy import (
+        DevCardDecision,
+    )
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import ResourceBank
+    from catanlab.resources import Resource
+    from catanlab.turns import TurnAgent
+
+    class ExplicitPlentyAgent(TurnAgent):
+        def __init__(self):
+            self.used = False
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            if self.used:
+                return DevCardDecision(
+                    card=None,
+                    utility=0.0,
+                )
+
+            self.used = True
+
+            return DevCardDecision(
+                card=(
+                    DevCardType.YEAR_OF_PLENTY
+                ),
+                utility=10.0,
+                resources=(
+                    Resource.ORE,
+                    Resource.ORE,
+                ),
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+            bank=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = build_random_board(seed=903)
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.YEAR_OF_PLENTY.value
+        ],
+    )
+
+    inventory = PlayerInventory()
+    bank = ResourceBank()
+
+    ore_before = inventory.count(
+        Resource.ORE
+    )
+
+    run_turn(
+        board,
+        [player],
+        [inventory],
+        [ExplicitPlentyAgent()],
+        player_id=0,
+        roll=2,
+        bank=bank,
+    )
+
+    assert (
+        inventory.count(Resource.ORE)
+        == ore_before + 2
+    )
+
+    assert (
+        DevCardType.YEAR_OF_PLENTY.value
+        not in player.dev_cards
+    )
+
+    assert (
+        DevCardType.YEAR_OF_PLENTY.value
+        in player.played_dev_cards
+    )

@@ -20,6 +20,12 @@ class DevCardDecision:
     card: DevCardType | None
     utility: float
     resource: Resource | None = None
+    resources: (
+        tuple[Resource, Resource] | None
+    ) = None
+    road_edges: (
+        tuple[tuple[int, int], ...] | None
+    ) = None
 
 
 def knight_utility(

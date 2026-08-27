@@ -6,6 +6,8 @@ from catanlab.search import (
     SearchState,
     apply_search_action,
     apply_search_dev_card_outcome,
+    apply_search_road_building,
+    apply_search_year_of_plenty,
     build_dev_card_belief,
     enumerate_search_actions,
     evaluate_search_state,
@@ -79,7 +81,9 @@ class OneStepLookaheadAgent(
         strategy,
         search_depth: int = 1,
         use_transposition_cache: bool = True,
-        search_maritime_trades: bool = False,
+        search_maritime_trades: bool = True,
+        search_year_of_plenty: bool = False,
+        search_road_building: bool = True,
     ):
         super().__init__(strategy)
 
@@ -94,6 +98,12 @@ class OneStepLookaheadAgent(
         )
         self.search_maritime_trades = (
             search_maritime_trades
+        )
+        self.search_year_of_plenty = (
+            search_year_of_plenty
+        )
+        self.search_road_building = (
+            search_road_building
         )
 
         self._evaluation_cache = {}
@@ -544,6 +554,386 @@ class OneStepLookaheadAgent(
             value=best.value,
             candidates=tuple(candidates),
             principal_variation=best.line,
+        )
+
+    def choose_dev_card_play(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        phase,
+        dev_deck=None,
+        bank=None,
+    ):
+        """
+        Search selected post-roll development-card
+        decisions while preserving the established
+        heuristic policy for all other cards.
+        """
+        baseline = super().choose_dev_card_play(
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        )
+
+        if (
+            not self.search_year_of_plenty
+            and not self.search_road_building
+        ):
+            return baseline
+
+        from catanlab.devcard_policy import (
+            DevCardDecision,
+            DevCardPhase,
+        )
+        from catanlab.devcards import (
+            DevCardType,
+            has_playable_dev_card,
+        )
+        from catanlab.resources import Resource
+        from catanlab.turns import legal_road_edges
+
+        # Pre-roll search would require a dice-roll
+        # chance node. Preserve heuristic behavior.
+        if phase != DevCardPhase.POST_ROLL:
+            return baseline
+
+        if dev_deck is None or bank is None:
+            return baseline
+
+        # ------------------------------------------------
+        # Year of Plenty
+        # ------------------------------------------------
+        if (
+            self.search_year_of_plenty
+            and baseline.card in (
+                None,
+                DevCardType.YEAR_OF_PLENTY,
+            )
+            and has_playable_dev_card(
+                player,
+                DevCardType.YEAR_OF_PLENTY,
+            )
+        ):
+            self._evaluation_cache = {}
+            self._search_cache = {}
+            self.cache_hits = 0
+            self.cache_misses = 0
+
+            state = self._make_search_state(
+                board,
+                players,
+                player,
+                inventories[player.player_id],
+                dev_deck,
+                bank,
+            )
+
+            (
+                hold_value,
+                _,
+            ) = self._search_line(
+                state,
+                player.player_id,
+                self.search_depth,
+            )
+
+            resources = (
+                Resource.WOOD,
+                Resource.BRICK,
+                Resource.SHEEP,
+                Resource.WHEAT,
+                Resource.ORE,
+            )
+
+            play_candidates = []
+
+            for index, resource_a in enumerate(
+                resources
+            ):
+                for resource_b in resources[
+                    index:
+                ]:
+                    required_a = (
+                        2
+                        if resource_a == resource_b
+                        else 1
+                    )
+
+                    if not state.bank.can_supply(
+                        resource_a,
+                        required_a,
+                    ):
+                        continue
+
+                    if (
+                        resource_b != resource_a
+                        and not state.bank.can_supply(
+                            resource_b,
+                            1,
+                        )
+                    ):
+                        continue
+
+                    next_state = (
+                        apply_search_year_of_plenty(
+                            state,
+                            player.player_id,
+                            resource_a,
+                            resource_b,
+                        )
+                    )
+
+                    (
+                        play_value,
+                        continuation,
+                    ) = self._search_line(
+                        next_state,
+                        player.player_id,
+                        self.search_depth,
+                    )
+
+                    play_candidates.append(
+                        (
+                            play_value,
+                            resource_a.value,
+                            resource_b.value,
+                            resource_a,
+                            resource_b,
+                            continuation,
+                        )
+                    )
+
+            if not play_candidates:
+                return DevCardDecision(
+                    card=None,
+                    utility=hold_value,
+                )
+
+            play_candidates.sort(
+                key=lambda item: (
+                    -item[0],
+                    item[1],
+                    item[2],
+                )
+            )
+
+            (
+                best_play_value,
+                _,
+                _,
+                resource_a,
+                resource_b,
+                _,
+            ) = play_candidates[0]
+
+            if best_play_value <= hold_value:
+                return DevCardDecision(
+                    card=None,
+                    utility=hold_value,
+                )
+
+            return DevCardDecision(
+                card=DevCardType.YEAR_OF_PLENTY,
+                utility=best_play_value,
+                resources=(
+                    resource_a,
+                    resource_b,
+                ),
+            )
+
+        # ------------------------------------------------
+        # Road Building
+        # ------------------------------------------------
+
+        # Preserve Knight, Monopoly, and YOP if the
+        # existing policy prefers one of them.
+        if baseline.card not in (
+            None,
+            DevCardType.ROAD_BUILDING,
+        ):
+            return baseline
+
+        if not self.search_road_building:
+            return baseline
+
+        if not has_playable_dev_card(
+            player,
+            DevCardType.ROAD_BUILDING,
+        ):
+            return baseline
+
+        self._evaluation_cache = {}
+        self._search_cache = {}
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+        state = self._make_search_state(
+            board,
+            players,
+            player,
+            inventories[player.player_id],
+            dev_deck,
+            bank,
+        )
+
+        # HOLD: keep the card and search ordinary
+        # same-turn actions.
+        (
+            hold_value,
+            _,
+        ) = self._search_line(
+            state,
+            player.player_id,
+            self.search_depth,
+        )
+
+        first_edges = legal_road_edges(
+            state.board,
+            state.players,
+            state.players[player.player_id],
+        )
+
+        if not first_edges:
+            return DevCardDecision(
+                card=None,
+                utility=hold_value,
+            )
+
+        play_candidates = []
+        seen_sequences = set()
+
+        for first in first_edges:
+            # A one-road Road Building play is legal
+            # under the existing simulator API.
+            single_key = (first,)
+
+            if single_key not in seen_sequences:
+                seen_sequences.add(single_key)
+
+                single_state = (
+                    apply_search_road_building(
+                        state,
+                        player.player_id,
+                        first,
+                    )
+                )
+
+                (
+                    single_value,
+                    continuation,
+                ) = self._search_line(
+                    single_state,
+                    player.player_id,
+                    self.search_depth,
+                )
+
+                play_candidates.append(
+                    (
+                        single_value,
+                        (first,),
+                        continuation,
+                    )
+                )
+
+            # Probe legality after the first free road
+            # without consuming the development card.
+            probe = (
+                state.fast_clone_for_ordinary_search()
+            )
+
+            probe_player = (
+                probe.players[player.player_id]
+            )
+
+            probe_player.roads.append(first)
+
+            second_edges = legal_road_edges(
+                probe.board,
+                probe.players,
+                probe_player,
+            )
+
+            for second in second_edges:
+                # The same final pair may be reachable
+                # in both orders. Evaluate it only once,
+                # retaining the first known-legal order.
+                final_key = tuple(
+                    sorted(
+                        (
+                            first,
+                            second,
+                        )
+                    )
+                )
+
+                if final_key in seen_sequences:
+                    continue
+
+                seen_sequences.add(final_key)
+
+                next_state = (
+                    apply_search_road_building(
+                        state,
+                        player.player_id,
+                        first,
+                        second,
+                    )
+                )
+
+                (
+                    play_value,
+                    continuation,
+                ) = self._search_line(
+                    next_state,
+                    player.player_id,
+                    self.search_depth,
+                )
+
+                play_candidates.append(
+                    (
+                        play_value,
+                        (
+                            first,
+                            second,
+                        ),
+                        continuation,
+                    )
+                )
+
+        if not play_candidates:
+            return DevCardDecision(
+                card=None,
+                utility=hold_value,
+            )
+
+        play_candidates.sort(
+            key=lambda item: (
+                -item[0],
+                item[1],
+            )
+        )
+
+        (
+            best_play_value,
+            best_edges,
+            _,
+        ) = play_candidates[0]
+
+        # Preserve the card on ties.
+        if best_play_value <= hold_value:
+            return DevCardDecision(
+                card=None,
+                utility=hold_value,
+            )
+
+        return DevCardDecision(
+            card=DevCardType.ROAD_BUILDING,
+            utility=best_play_value,
+            road_edges=best_edges,
         )
 
     def choose_action(

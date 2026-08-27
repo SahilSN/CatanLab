@@ -1119,3 +1119,154 @@ def test_apply_search_maritime_trade_isolated():
         )
         == original_ore
     )
+
+
+def test_apply_search_year_of_plenty_isolated():
+    from catanlab.devcards import DevCardType
+    from catanlab.resources import Resource
+    from catanlab.search import (
+        apply_search_year_of_plenty,
+    )
+
+    state = make_search_state()
+
+    player = state.players[0]
+    inventory = state.inventories[0]
+
+    player.dev_cards.append(
+        DevCardType.YEAR_OF_PLENTY.value
+    )
+
+    wood_before = inventory.count(
+        Resource.WOOD
+    )
+    ore_before = inventory.count(
+        Resource.ORE
+    )
+
+    result = apply_search_year_of_plenty(
+        state,
+        0,
+        Resource.WOOD,
+        Resource.ORE,
+    )
+
+    assert (
+        result.inventories[0].count(
+            Resource.WOOD
+        )
+        == wood_before + 1
+    )
+
+    assert (
+        result.inventories[0].count(
+            Resource.ORE
+        )
+        == ore_before + 1
+    )
+
+    assert (
+        state.inventories[0].count(
+            Resource.WOOD
+        )
+        == wood_before
+    )
+
+    assert (
+        state.inventories[0].count(
+            Resource.ORE
+        )
+        == ore_before
+    )
+
+    assert (
+        DevCardType.YEAR_OF_PLENTY.value
+        not in result.players[0].dev_cards
+    )
+
+    assert (
+        DevCardType.YEAR_OF_PLENTY.value
+        in state.players[0].dev_cards
+    )
+
+
+def test_apply_search_road_building_places_free_roads_isolated():
+    from catanlab.devcards import DevCardType
+    from catanlab.search import (
+        apply_search_road_building,
+    )
+    from catanlab.turns import legal_road_edges
+
+    state = make_search_state()
+
+    player = state.players[0]
+
+    player.dev_cards.append(
+        DevCardType.ROAD_BUILDING.value
+    )
+
+    first_edges = legal_road_edges(
+        state.board,
+        state.players,
+        player,
+    )
+
+    assert first_edges
+
+    first = first_edges[0]
+
+    # Temporarily extend the live player's network only
+    # to discover a legal second edge, then undo it.
+    player.roads.append(first)
+
+    try:
+        second_edges = legal_road_edges(
+            state.board,
+            state.players,
+            player,
+        )
+    finally:
+        player.roads.pop()
+
+    second = (
+        second_edges[0]
+        if second_edges
+        else None
+    )
+
+    original_roads = list(
+        state.players[0].roads
+    )
+
+    result = apply_search_road_building(
+        state,
+        0,
+        first,
+        second,
+    )
+
+    assert first in result.players[0].roads
+
+    if second is not None:
+        assert second in result.players[0].roads
+
+    # Original search state must remain untouched.
+    assert (
+        state.players[0].roads
+        == original_roads
+    )
+
+    assert (
+        DevCardType.ROAD_BUILDING.value
+        not in result.players[0].dev_cards
+    )
+
+    assert (
+        DevCardType.ROAD_BUILDING.value
+        in state.players[0].dev_cards
+    )
+
+    assert (
+        DevCardType.ROAD_BUILDING.value
+        in result.players[0].played_dev_cards
+    )

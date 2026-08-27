@@ -1034,21 +1034,22 @@ def _execute_dev_card_decision(
         decision.card
         == DevCardType.YEAR_OF_PLENTY
     ):
-        resources = (
-            _year_of_plenty_resources(
-                inventories[
-                    player.player_id
-                ],
-                bank=bank,
+        resources = decision.resources
+
+        if resources is None:
+            resources = (
+                _year_of_plenty_resources(
+                    inventories[
+                        player.player_id
+                    ],
+                    bank=bank,
+                )
             )
-        )
 
         if resources is None:
             return False
 
-        resource_a, resource_b = (
-            resources
-        )
+        resource_a, resource_b = resources
 
         play_year_of_plenty(
             player,
@@ -1066,13 +1067,16 @@ def _execute_dev_card_decision(
         decision.card
         == DevCardType.ROAD_BUILDING
     ):
-        edges = _road_building_edges(
-            board,
-            players,
-            player,
-        )
+        edges = decision.road_edges
 
         if edges is None:
+            edges = _road_building_edges(
+                board,
+                players,
+                player,
+            )
+
+        if not edges:
             return False
 
         play_road_building(
@@ -1529,12 +1533,27 @@ def run_turn(
         if played_action_dev_card:
             return False
 
+        import inspect
+
+        parameters = inspect.signature(
+            agent.choose_dev_card_play
+        ).parameters
+
+        kwargs = {}
+
+        if "dev_deck" in parameters:
+            kwargs["dev_deck"] = dev_deck
+
+        if "bank" in parameters:
+            kwargs["bank"] = bank
+
         decision = agent.choose_dev_card_play(
             board,
             players,
             player,
             inventories,
             phase,
+            **kwargs,
         )
 
         if not _execute_dev_card_decision(

@@ -4,6 +4,7 @@ import argparse
 import math
 import statistics
 import time
+from pathlib import Path
 
 import pandas as pd
 
@@ -25,16 +26,12 @@ def mean_ci95(values):
     stdev = statistics.stdev(values)
     half = 1.96 * stdev / math.sqrt(len(values))
 
-    return (
-        mean,
-        mean - half,
-        mean + half,
-    )
+    return mean, mean - half, mean + half
 
 
 def make_lineup(
     target_seat: int,
-    maritime: bool,
+    search_yop: bool,
 ):
     opponents = [
         StrategyType.HYBRID_OWS,
@@ -51,14 +48,17 @@ def make_lineup(
             strategy = StrategyType.FIVE_RESOURCE
 
             strategies.append(strategy)
+
             agents.append(
                 OneStepLookaheadAgent(
                     strategy,
                     search_depth=2,
                     use_transposition_cache=False,
-                    search_maritime_trades=maritime,
+                    search_maritime_trades=True,
+                    search_year_of_plenty=search_yop,
                 )
             )
+
         else:
             strategy = opponents[
                 opponent_index
@@ -66,6 +66,7 @@ def make_lineup(
             opponent_index += 1
 
             strategies.append(strategy)
+
             agents.append(
                 AdaptiveStrategyAgent(
                     strategy
@@ -88,12 +89,18 @@ def player_row(
         "variant": variant,
         "seed": seed,
         "seat": target_seat,
-        "won": int(result.winner_id == target_seat),
+        "won": int(
+            result.winner_id == target_seat
+        ),
         "final_vp": player.victory_points,
         "roads": len(player.roads),
-        "settlements": len(player.settlements),
+        "settlements": len(
+            player.settlements
+        ),
         "cities": len(player.cities),
-        "dev_cards": len(player.dev_cards),
+        "dev_cards": len(
+            player.dev_cards
+        ),
         "has_longest_road": int(
             player.has_longest_road
         ),
@@ -117,23 +124,33 @@ def main():
 
     rows = []
 
-    for repetition in range(args.repetitions):
+    for repetition in range(
+        args.repetitions
+    ):
         for seat in range(4):
-            seed = repetition * 4 + seat
+            seed = (
+                repetition * 4
+                + seat
+            )
 
-            for variant, maritime in (
-                ("maritime_off", False),
-                ("maritime_on", True),
+            for (
+                variant,
+                search_yop,
+            ) in (
+                ("yop_off", False),
+                ("yop_on", True),
             ):
                 (
                     strategies,
                     agents,
                 ) = make_lineup(
                     target_seat=seat,
-                    maritime=maritime,
+                    search_yop=search_yop,
                 )
 
-                start = time.perf_counter()
+                start = (
+                    time.perf_counter()
+                )
 
                 result = run_game(
                     seed=seed,
@@ -142,7 +159,8 @@ def main():
                 )
 
                 runtime = (
-                    time.perf_counter() - start
+                    time.perf_counter()
+                    - start
                 )
 
                 rows.append(
@@ -155,8 +173,15 @@ def main():
                     )
                 )
 
-            completed = repetition * 4 + seat + 1
-            total = args.repetitions * 4
+            completed = (
+                repetition * 4
+                + seat
+                + 1
+            )
+
+            total = (
+                args.repetitions * 4
+            )
 
             print(
                 f"[{completed}/{total}] "
@@ -179,13 +204,20 @@ def main():
                 "settlements",
                 "mean",
             ),
-            avg_cities=("cities", "mean"),
+            avg_cities=(
+                "cities",
+                "mean",
+            ),
             avg_dev_cards=(
                 "dev_cards",
                 "mean",
             ),
             longest_road_rate=(
                 "has_longest_road",
+                "mean",
+            ),
+            largest_army_rate=(
+                "has_largest_army",
                 "mean",
             ),
             avg_runtime_seconds=(
@@ -197,28 +229,49 @@ def main():
     )
 
     print()
-    print("=== MARITIME SEARCH SUMMARY ===")
-    print(summary.to_string(index=False))
+    print(
+        "=== YEAR OF PLENTY "
+        "SEARCH SUMMARY ==="
+    )
+
+    print(
+        summary.to_string(
+            index=False
+        )
+    )
 
     off = (
-        df[df["variant"] == "maritime_off"]
-        .sort_values(["seed", "seat"])
+        df[
+            df["variant"] == "yop_off"
+        ]
+        .sort_values(
+            ["seed", "seat"]
+        )
         .reset_index(drop=True)
     )
 
     on = (
-        df[df["variant"] == "maritime_on"]
-        .sort_values(["seed", "seat"])
+        df[
+            df["variant"] == "yop_on"
+        ]
+        .sort_values(
+            ["seed", "seat"]
+        )
         .reset_index(drop=True)
     )
 
-    assert list(off["seed"]) == list(on["seed"])
-    assert list(off["seat"]) == list(on["seat"])
+    assert list(off["seed"]) == list(
+        on["seed"]
+    )
+
+    assert list(off["seat"]) == list(
+        on["seat"]
+    )
 
     print()
     print(
         "=== PAIRED CHANGES "
-        "(MARITIME ON - OFF) ==="
+        "(YOP ON - OFF) ==="
     )
 
     metrics = [
@@ -235,61 +288,85 @@ def main():
 
     for metric in metrics:
         diffs = (
-            on[metric] - off[metric]
+            on[metric]
+            - off[metric]
         ).tolist()
 
-        mean, lo, hi = mean_ci95(diffs)
+        mean, lo, hi = (
+            mean_ci95(diffs)
+        )
 
         print(
             f"{metric:22s} "
             f"{mean:+.4f} "
             f"95% CI "
-            f"[{lo:+.4f}, {hi:+.4f}]"
+            f"[{lo:+.4f}, "
+            f"{hi:+.4f}]"
         )
 
-    out_dir = "results/maritime_search"
+    paired = off[
+        [
+            "seed",
+            "seat",
+        ]
+    ].copy()
 
-    from pathlib import Path
+    for metric in metrics:
+        paired[
+            f"{metric}_off"
+        ] = off[metric]
 
-    Path(out_dir).mkdir(
+        paired[
+            f"{metric}_on"
+        ] = on[metric]
+
+        paired[
+            f"{metric}_diff"
+        ] = (
+            on[metric]
+            - off[metric]
+        )
+
+    out_dir = Path(
+        "results/yop_hold_play_search"
+    )
+
+    out_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     df.to_csv(
-        f"{out_dir}/player_games.csv",
+        out_dir
+        / "player_games.csv",
         index=False,
     )
 
     summary.to_csv(
-        f"{out_dir}/summary.csv",
+        out_dir
+        / "summary.csv",
         index=False,
     )
 
-    paired = off.copy()
-
-    for metric in metrics:
-        paired[f"{metric}_off"] = off[metric]
-        paired[f"{metric}_on"] = on[metric]
-        paired[f"{metric}_delta"] = (
-            on[metric] - off[metric]
-        )
-
     paired.to_csv(
-        f"{out_dir}/paired_games.csv",
+        out_dir
+        / "paired_games.csv",
         index=False,
     )
 
     print()
     print("Saved:")
     print(
-        f"  {out_dir}/player_games.csv"
+        f"  {out_dir}/"
+        "player_games.csv"
     )
     print(
-        f"  {out_dir}/summary.csv"
+        f"  {out_dir}/"
+        "summary.csv"
     )
     print(
-        f"  {out_dir}/paired_games.csv"
+        f"  {out_dir}/"
+        "paired_games.csv"
     )
 
 

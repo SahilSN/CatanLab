@@ -525,6 +525,73 @@ def apply_search_dev_card_outcome(
     return cloned
 
 
+def apply_search_road_building(
+    state: SearchState,
+    player_id: int,
+    first_edge: tuple[int, int],
+    second_edge: tuple[int, int] | None = None,
+) -> SearchState:
+    """
+    Apply a hypothetical Road Building play.
+
+    Road Building changes the acting player's road/card
+    state but does not mutate Board, so the specialized
+    ordinary-search clone remains safe here.
+    """
+    from catanlab.devcards import (
+        play_road_building,
+    )
+
+    cloned = (
+        state.fast_clone_for_ordinary_search()
+    )
+
+    play_road_building(
+        cloned.players[player_id],
+        cloned.board,
+        cloned.players,
+        first_edge,
+        second_edge,
+    )
+
+    return cloned
+
+
+def apply_search_year_of_plenty(
+    state: SearchState,
+    player_id: int,
+    resource_a,
+    resource_b,
+) -> SearchState:
+    """
+    Apply a hypothetical Year of Plenty play.
+
+    The ordinary-search fast clone is safe here because
+    Year of Plenty mutates player/card state, inventory,
+    and bank state, but does not mutate Board.
+    """
+    from catanlab.devcards import (
+        play_year_of_plenty,
+    )
+
+    cloned = (
+        state.fast_clone_for_ordinary_search()
+    )
+
+    player = cloned.players[player_id]
+    inventory = cloned.inventories[player_id]
+
+    play_year_of_plenty(
+        player,
+        inventory,
+        resource_a,
+        resource_b,
+        bank=cloned.bank,
+    )
+
+    return cloned
+
+
 def evaluate_search_state(
     state: SearchState,
     player_id: int,

@@ -885,3 +885,520 @@ def test_depth_two_search_uses_maritime_trade_to_enable_city():
         decision.principal_variation[1].action_type
         == ActionType.BUILD_CITY
     )
+
+
+def test_year_of_plenty_search_enables_city():
+    from catanlab.devcard_policy import DevCardPhase
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search import (
+        apply_search_year_of_plenty,
+    )
+    from catanlab.turns import ActionType
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    player = players[0]
+
+    # A city upgrade must have an existing settlement.
+    player.settlements.append(
+        board.vertices[0].id
+    )
+
+    # Make Year of Plenty playable. Do not put it in
+    # new_dev_cards; this represents a card bought on
+    # an earlier turn.
+    player.dev_cards.append(
+        DevCardType.YEAR_OF_PLENTY.value
+    )
+
+    inventory = PlayerInventory()
+
+    # City costs 2 wheat + 3 ore.
+    #
+    # Start with the complete wheat requirement but
+    # exactly two ore short. The economically decisive
+    # YOP choice should therefore be ORE + ORE.
+    inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+
+    inventory.add(
+        Resource.ORE,
+        1,
+    )
+
+    inventories[0] = inventory
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+
+        # Keep this test focused specifically on YOP.
+        search_maritime_trades=False,
+
+        search_year_of_plenty=True,
+    )
+
+    dev_decision = agent.choose_dev_card_play(
+        board,
+        players,
+        player,
+        inventories,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert (
+        dev_decision.card
+        == DevCardType.YEAR_OF_PLENTY
+    )
+
+    assert (
+        dev_decision.resources
+        == (
+            Resource.ORE,
+            Resource.ORE,
+        )
+    )
+
+    # Reconstruct the state the YOP search evaluated.
+    state = agent._make_search_state(
+        board,
+        players,
+        player,
+        inventory,
+        deck,
+        bank,
+    )
+
+    after_plenty = (
+        apply_search_year_of_plenty(
+            state,
+            player.player_id,
+            *dev_decision.resources,
+        )
+    )
+
+    # The selected pair should make the city immediately
+    # affordable.
+    assert (
+        after_plenty.inventories[
+            player.player_id
+        ].count(Resource.WHEAT)
+        == 2
+    )
+
+    assert (
+        after_plenty.inventories[
+            player.player_id
+        ].count(Resource.ORE)
+        == 3
+    )
+
+    ordinary_decision = agent.evaluate_actions(
+        after_plenty.board,
+        after_plenty.players,
+        after_plenty.players[
+            player.player_id
+        ],
+        after_plenty.inventories[
+            player.player_id
+        ],
+        after_plenty.dev_deck,
+        after_plenty.bank,
+    )
+
+    assert (
+        ordinary_decision.action.action_type
+        == ActionType.BUILD_CITY
+    )
+
+
+def test_year_of_plenty_search_holds_when_resources_add_no_value():
+    from catanlab.devcard_policy import DevCardPhase
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    player = players[0]
+
+    player.dev_cards.append(
+        DevCardType.YEAR_OF_PLENTY.value
+    )
+
+    inventory = PlayerInventory()
+
+    # At depth two, this is comfortably enough of every
+    # resource to make two additional YOP resources
+    # irrelevant to ordinary-action affordability.
+    for resource in (
+        Resource.WOOD,
+        Resource.BRICK,
+        Resource.SHEEP,
+        Resource.WHEAT,
+        Resource.ORE,
+    ):
+        inventory.add(
+            resource,
+            10,
+        )
+
+    inventories[0] = inventory
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=False,
+        search_year_of_plenty=True,
+    )
+
+    decision = agent.choose_dev_card_play(
+        board,
+        players,
+        player,
+        inventories,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert decision.card is None
+    assert decision.resources is None
+
+
+def test_year_of_plenty_search_does_not_play_new_card():
+    from catanlab.devcard_policy import DevCardPhase
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    player = players[0]
+
+    card = DevCardType.YEAR_OF_PLENTY.value
+
+    player.dev_cards.append(card)
+    player.new_dev_cards.append(card)
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+    inventory.add(
+        Resource.ORE,
+        1,
+    )
+
+    inventories[0] = inventory
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=False,
+        search_year_of_plenty=True,
+    )
+
+    decision = agent.choose_dev_card_play(
+        board,
+        players,
+        player,
+        inventories,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert decision.card is None
+
+
+def test_year_of_plenty_search_preserves_pre_roll_policy():
+    from catanlab.devcard_policy import DevCardPhase
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    player = players[0]
+
+    player.dev_cards.append(
+        DevCardType.YEAR_OF_PLENTY.value
+    )
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+    inventory.add(
+        Resource.ORE,
+        1,
+    )
+
+    inventories[0] = inventory
+
+    search_agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=True,
+        search_year_of_plenty=True,
+    )
+
+    baseline_agent = AdaptiveStrategyAgent(
+        StrategyType.FIVE_RESOURCE
+    )
+
+    expected = (
+        baseline_agent.choose_dev_card_play(
+            board,
+            players,
+            player,
+            inventories,
+            DevCardPhase.PRE_ROLL,
+        )
+    )
+
+    actual = (
+        search_agent.choose_dev_card_play(
+            board,
+            players,
+            player,
+            inventories,
+            DevCardPhase.PRE_ROLL,
+            dev_deck=deck,
+            bank=bank,
+        )
+    )
+
+    assert actual == expected
+
+
+def test_year_of_plenty_search_preserves_other_dev_card_choice():
+    from catanlab.devcard_policy import DevCardPhase
+    from catanlab.devcards import DevCardType
+
+    (
+        board,
+        players,
+        inventories,
+        deck,
+        bank,
+    ) = make_state()
+
+    player = players[0]
+
+    player.dev_cards.extend(
+        [
+            DevCardType.KNIGHT.value,
+            DevCardType.YEAR_OF_PLENTY.value,
+        ]
+    )
+
+    player.knights_played = 2
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=True,
+        search_year_of_plenty=True,
+    )
+
+    decision = agent.choose_dev_card_play(
+        board,
+        players,
+        player,
+        inventories,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert (
+        decision.card
+        == DevCardType.KNIGHT
+    )
+
+
+def test_road_building_search_enables_settlement():
+    from catanlab.board import Board, Edge, Vertex
+    from catanlab.devcard_policy import DevCardPhase
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import ActionType
+
+    (
+        _,
+        _,
+        _,
+        deck,
+        bank,
+    ) = make_state()
+
+    # Linear network:
+    #
+    # settlement
+    #    0 ----- 1 ----- 2
+    #
+    # Two free roads reach vertex 2, which satisfies
+    # the distance rule from the settlement at 0.
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                neighbors=[1],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                neighbors=[0, 2],
+            ),
+            Vertex(
+                id=2,
+                position=(2.0, 0.0),
+                neighbors=[1],
+            ),
+        ],
+        edges=[
+            Edge(
+                vertex_a=0,
+                vertex_b=1,
+            ),
+            Edge(
+                vertex_a=1,
+                vertex_b=2,
+            ),
+        ],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+        dev_cards=[
+            DevCardType.ROAD_BUILDING.value
+        ],
+    )
+
+    players = [player]
+
+    inventory = PlayerInventory()
+
+    # Already possess the complete settlement cost.
+    # The only missing ingredient is road connectivity
+    # to a legal new settlement vertex.
+    inventory.add(Resource.WOOD, 1)
+    inventory.add(Resource.BRICK, 1)
+    inventory.add(Resource.SHEEP, 1)
+    inventory.add(Resource.WHEAT, 1)
+
+    inventories = [inventory]
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=False,
+        search_year_of_plenty=False,
+        search_road_building=True,
+    )
+
+    dev_decision = agent.choose_dev_card_play(
+        board,
+        players,
+        player,
+        inventories,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert (
+        dev_decision.card
+        == DevCardType.ROAD_BUILDING
+    )
+
+    assert (
+        dev_decision.road_edges
+        == (
+            (0, 1),
+            (1, 2),
+        )
+    )
+
+    from catanlab.search import (
+        apply_search_road_building,
+    )
+
+    after_roads = (
+        apply_search_road_building(
+            agent._make_search_state(
+                board,
+                players,
+                player,
+                inventory,
+                deck,
+                bank,
+            ),
+            0,
+            *dev_decision.road_edges,
+        )
+    )
+
+    ordinary = agent.evaluate_actions(
+        after_roads.board,
+        after_roads.players,
+        after_roads.players[0],
+        after_roads.inventories[0],
+        after_roads.dev_deck,
+        after_roads.bank,
+    )
+
+    assert (
+        ordinary.action.action_type
+        == ActionType.BUILD_SETTLEMENT
+    )
+
+    assert ordinary.action.vertex_id == 2
