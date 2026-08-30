@@ -3768,3 +3768,336 @@ def test_knight_uses_agent_robber_choices():
     assert inventories[1].count(
         Resource.WHEAT
     ) == 0
+
+
+
+def test_monopoly_uses_agent_resource_choice():
+    from catanlab.board import Board
+    from catanlab.devcard_policy import DevCardDecision
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class MonopolyAgent(TurnAgent):
+        def __init__(self):
+            self.resource_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            return DevCardDecision(
+                card=DevCardType.MONOPOLY,
+                utility=10.0,
+                resource=Resource.WOOD,
+            )
+
+        def choose_monopoly_resource(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            suggested_resource=None,
+        ):
+            self.resource_calls += 1
+            assert suggested_resource == Resource.WOOD
+            return Resource.ORE
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+            dev_cards=[
+                DevCardType.MONOPOLY.value,
+            ],
+        ),
+        PlayerState(
+            player_id=1,
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WOOD,
+        2,
+    )
+    inventories[1].add(
+        Resource.ORE,
+        3,
+    )
+
+    agent = MonopolyAgent()
+
+    run_turn(
+        board,
+        players,
+        inventories,
+        [
+            agent,
+            PassAgent(),
+        ],
+        player_id=0,
+        roll=2,
+    )
+
+    assert agent.resource_calls == 1
+    assert inventories[0].count(
+        Resource.ORE
+    ) == 3
+    assert inventories[0].count(
+        Resource.WOOD
+    ) == 0
+
+
+def test_year_of_plenty_uses_agent_resource_choice():
+    from catanlab.board import Board
+    from catanlab.devcard_policy import DevCardDecision
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class PlentyAgent(TurnAgent):
+        def __init__(self):
+            self.resource_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            return DevCardDecision(
+                card=DevCardType.YEAR_OF_PLENTY,
+                utility=10.0,
+            )
+
+        def choose_year_of_plenty_resources(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            bank=None,
+            suggested_resources=None,
+        ):
+            self.resource_calls += 1
+            assert suggested_resources is None
+            return (
+                Resource.ORE,
+                Resource.ORE,
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.YEAR_OF_PLENTY.value,
+        ],
+    )
+
+    inventory = PlayerInventory()
+    agent = PlentyAgent()
+
+    run_turn(
+        board,
+        [player],
+        [inventory],
+        [agent],
+        player_id=0,
+        roll=2,
+    )
+
+    assert agent.resource_calls == 1
+    assert inventory.count(
+        Resource.ORE
+    ) == 2
+
+
+def test_road_building_uses_agent_edge_choice():
+    from catanlab.board import (
+        Board,
+        Edge,
+        Vertex,
+    )
+    from catanlab.devcard_policy import DevCardDecision
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class RoadBuildingAgent(TurnAgent):
+        def __init__(self):
+            self.edge_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            return DevCardDecision(
+                card=DevCardType.ROAD_BUILDING,
+                utility=10.0,
+            )
+
+        def choose_road_building_edges(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=None,
+        ):
+            self.edge_calls += 1
+            assert suggested_edges is None
+            return (
+                (0, 1),
+                (1, 2),
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[],
+            ),
+            Vertex(
+                id=2,
+                position=(2.0, 0.0),
+                adjacent_tiles=[],
+            ),
+        ],
+        edges=[
+            Edge(
+                vertex_a=0,
+                vertex_b=1,
+            ),
+            Edge(
+                vertex_a=1,
+                vertex_b=2,
+            ),
+        ],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+        dev_cards=[
+            DevCardType.ROAD_BUILDING.value,
+        ],
+    )
+
+    agent = RoadBuildingAgent()
+
+    run_turn(
+        board,
+        [player],
+        [PlayerInventory()],
+        [agent],
+        player_id=0,
+        roll=2,
+    )
+
+    assert agent.edge_calls == 1
+    assert (0, 1) in player.roads
+    assert (1, 2) in player.roads
+
+

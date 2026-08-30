@@ -185,6 +185,68 @@ class TurnAgent:
             player,
         )
 
+    def choose_monopoly_resource(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        suggested_resource=None,
+    ):
+        """
+        Choose the resource targeted by Monopoly.
+
+        The default implementation preserves a resource
+        already selected by the Core-v1 dev-card policy.
+        """
+        return suggested_resource
+
+    def choose_year_of_plenty_resources(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        suggested_resources=None,
+    ):
+        """
+        Choose the two resources gained from Year of Plenty.
+
+        Preserve an explicitly supplied Core-v1 choice;
+        otherwise use the existing deterministic helper.
+        """
+        if suggested_resources is not None:
+            return suggested_resources
+
+        return _year_of_plenty_resources(
+            inventories[player.player_id],
+            bank=bank,
+        )
+
+    def choose_road_building_edges(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        suggested_edges=None,
+    ):
+        """
+        Choose the free roads placed by Road Building.
+
+        Preserve an explicitly supplied Core-v1 choice;
+        otherwise use the existing deterministic helper.
+        """
+        if suggested_edges is not None:
+            return suggested_edges
+
+        return _road_building_edges(
+            board,
+            players,
+            player,
+        )
+
     def choose_discards(
         self,
         player,
@@ -1059,13 +1121,21 @@ def _execute_dev_card_decision(
         return False
 
     if decision.card == DevCardType.MONOPOLY:
-        if decision.resource is None:
+        resource = agent.choose_monopoly_resource(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_resource=decision.resource,
+        )
+
+        if resource is None:
             return False
 
         play_monopoly(
             player,
             inventories,
-            decision.resource,
+            resource,
         )
 
         return True
@@ -1074,17 +1144,18 @@ def _execute_dev_card_decision(
         decision.card
         == DevCardType.YEAR_OF_PLENTY
     ):
-        resources = decision.resources
-
-        if resources is None:
-            resources = (
-                _year_of_plenty_resources(
-                    inventories[
-                        player.player_id
-                    ],
-                    bank=bank,
-                )
+        resources = (
+            agent.choose_year_of_plenty_resources(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                suggested_resources=(
+                    decision.resources
+                ),
             )
+        )
 
         if resources is None:
             return False
@@ -1107,14 +1178,13 @@ def _execute_dev_card_decision(
         decision.card
         == DevCardType.ROAD_BUILDING
     ):
-        edges = decision.road_edges
-
-        if edges is None:
-            edges = _road_building_edges(
-                board,
-                players,
-                player,
-            )
+        edges = agent.choose_road_building_edges(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=decision.road_edges,
+        )
 
         if not edges:
             return False
