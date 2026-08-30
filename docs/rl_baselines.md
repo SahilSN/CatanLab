@@ -80,3 +80,49 @@ Both the win-rate and mean-VP confidence intervals are entirely above zero, so t
         OneStepLookaheadAgent, depth 2
 
 The next evaluation milestone is a direct comparison between the frozen KL-PPO learned policy and the frozen depth-2 search policy.
+
+## Learned policy vs depth-2 search
+
+The frozen KL-PPO policy was compared directly against the
+frozen depth-2 search agent over 400 fresh paired games.
+
+Search configuration:
+
+    search depth:          2
+    transposition cache:   off
+    maritime trades:       on
+    Year of Plenty:        off
+    Road Building:         on
+    Monopoly:              off
+
+Win rate:
+
+    depth-2 search:  0.4725
+    KL-PPO:          0.2125
+    PPO - search:   -0.2600
+    95% CI:         [-0.3200, -0.2000]
+
+Mean victory points:
+
+    depth-2 search:  8.3750
+    KL-PPO:          7.0850
+    PPO - search:   -1.2900
+    95% CI:         [-1.5300, -1.0574]
+
+Paired exclusive wins:
+
+    search only: 137
+    KL-PPO only: 33
+
+The depth-2 search policy therefore remains substantially
+stronger than the best validated learned policy.
+
+Full-game wall-clock timing was:
+
+    depth-2 search: 2.1322 seconds/game
+    KL-PPO:         1.7126 seconds/game
+    ratio:          1.25x
+
+These timings measure complete game execution and should not
+be interpreted as isolated agent decision latency.
+
