@@ -582,6 +582,187 @@ class OneStepLookaheadAgent(
             principal_variation=best.line,
         )
 
+    @staticmethod
+    def _copy_resource_inventory(
+        inventory,
+    ):
+        """
+        Return an independent copy of a resource hand.
+        """
+        from catanlab.economy import PlayerInventory
+        from catanlab.resources import Resource
+
+        copied = PlayerInventory()
+
+        for resource in (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        ):
+            amount = inventory.count(
+                resource
+            )
+
+            if amount:
+                copied.add(
+                    resource,
+                    amount,
+                )
+
+        return copied
+
+    def _domestic_trade_hand_value(
+        self,
+        board,
+        players,
+        player,
+        inventory,
+    ) -> float:
+        """
+        Evaluate this player's resource hand for domestic
+        trade decisions.
+
+        The value mirrors the build-readiness model used
+        by Search-v2 proposal and discard decisions.
+        """
+        from catanlab.economy import (
+            BUILD_COSTS,
+            BuildType,
+        )
+        from catanlab.resources import Resource
+        from catanlab.turns import (
+            legal_road_edges,
+            legal_settlement_vertices,
+        )
+
+        build_available = {
+            BuildType.CITY: bool(
+                player.settlements
+            ),
+            BuildType.SETTLEMENT: bool(
+                legal_settlement_vertices(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.ROAD: bool(
+                legal_road_edges(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.DEV_CARD: True,
+        }
+
+        build_weights = {
+            BuildType.CITY: 2.0,
+            BuildType.SETTLEMENT: 1.8,
+            BuildType.DEV_CARD: 1.2,
+            BuildType.ROAD: 0.8,
+        }
+
+        value = 0.0
+
+        for build_type in (
+            BuildType.CITY,
+            BuildType.SETTLEMENT,
+            BuildType.DEV_CARD,
+            BuildType.ROAD,
+        ):
+            if not build_available[
+                build_type
+            ]:
+                continue
+
+            cost = BUILD_COSTS[
+                build_type
+            ]
+
+            total_required = sum(
+                cost.values()
+            )
+
+            satisfied = sum(
+                min(
+                    inventory.count(
+                        resource
+                    ),
+                    required,
+                )
+                for resource, required
+                in cost.items()
+            )
+
+            weight = build_weights[
+                build_type
+            ]
+
+            if total_required:
+                value += (
+                    weight
+                    * satisfied
+                    / total_required
+                )
+
+            if inventory.can_afford(
+                build_type
+            ):
+                value += weight
+
+        value += 0.05 * sum(
+            inventory.count(resource) > 0
+            for resource in (
+                Resource.WOOD,
+                Resource.BRICK,
+                Resource.SHEEP,
+                Resource.WHEAT,
+                Resource.ORE,
+            )
+        )
+
+        return value
+
+    def _simulate_domestic_trade_hand(
+        self,
+        inventory,
+        *,
+        outgoing,
+        incoming,
+    ):
+        """
+        Return this player's hypothetical post-trade hand.
+
+        `outgoing` is what this player gives and `incoming`
+        is what this player receives.
+        """
+        simulated = self._copy_resource_inventory(
+            inventory
+        )
+
+        for resource, amount in outgoing:
+            if (
+                simulated.count(resource)
+                < amount
+            ):
+                return None
+
+            simulated.remove(
+                resource,
+                amount,
+            )
+
+        for resource, amount in incoming:
+            simulated.add(
+                resource,
+                amount,
+            )
+
+        return simulated
+
     def propose_player_trade(
         self,
         board,
@@ -615,19 +796,10 @@ class OneStepLookaheadAgent(
                 agents=agents,
             )
 
-        from catanlab.economy import (
-            BUILD_COSTS,
-            BuildType,
-            PlayerInventory,
-        )
         from catanlab.resources import Resource
         from catanlab.trading import (
             TradeOffer,
             validate_trade_terms,
-        )
-        from catanlab.turns import (
-            legal_road_edges,
-            legal_settlement_vertices,
         )
 
         if excluded_recipients is None:
@@ -663,110 +835,13 @@ class OneStepLookaheadAgent(
         if not recipients:
             return None
 
-        build_available = {
-            BuildType.CITY: bool(
-                player.settlements
-            ),
-            BuildType.SETTLEMENT: bool(
-                legal_settlement_vertices(
-                    board,
-                    players,
-                    player,
-                )
-            ),
-            BuildType.ROAD: bool(
-                legal_road_edges(
-                    board,
-                    players,
-                    player,
-                )
-            ),
-            BuildType.DEV_CARD: True,
-        }
-
-        build_weights = {
-            BuildType.CITY: 2.0,
-            BuildType.SETTLEMENT: 1.8,
-            BuildType.DEV_CARD: 1.2,
-            BuildType.ROAD: 0.8,
-        }
-
-        def copy_inventory(source):
-            result = PlayerInventory()
-
-            for resource in resources:
-                amount = source.count(
-                    resource
-                )
-
-                if amount:
-                    result.add(
-                        resource,
-                        amount,
-                    )
-
-            return result
-
-        def hand_value(candidate_inventory):
-            value = 0.0
-
-            for build_type in (
-                BuildType.CITY,
-                BuildType.SETTLEMENT,
-                BuildType.DEV_CARD,
-                BuildType.ROAD,
-            ):
-                if not build_available[
-                    build_type
-                ]:
-                    continue
-
-                cost = BUILD_COSTS[
-                    build_type
-                ]
-
-                total_required = sum(
-                    cost.values()
-                )
-
-                satisfied = sum(
-                    min(
-                        candidate_inventory.count(
-                            resource
-                        ),
-                        required,
-                    )
-                    for resource, required
-                    in cost.items()
-                )
-
-                weight = build_weights[
-                    build_type
-                ]
-
-                if total_required:
-                    value += (
-                        weight
-                        * satisfied
-                        / total_required
-                    )
-
-                if candidate_inventory.can_afford(
-                    build_type
-                ):
-                    value += weight
-
-            # Small flexibility reward after build value.
-            value += 0.05 * sum(
-                candidate_inventory.count(resource)
-                > 0
-                for resource in resources
+        before_value = (
+            self._domestic_trade_hand_value(
+                board,
+                players,
+                player,
+                inventory,
             )
-
-            return value
-
-        before_value = hand_value(
-            inventory
         )
 
         candidates = []
@@ -781,22 +856,34 @@ class OneStepLookaheadAgent(
                 if receive_resource == give_resource:
                     continue
 
-                simulated = copy_inventory(
-                    inventory
+                simulated = (
+                    self._simulate_domestic_trade_hand(
+                        inventory,
+                        outgoing=(
+                            (
+                                give_resource,
+                                1,
+                            ),
+                        ),
+                        incoming=(
+                            (
+                                receive_resource,
+                                1,
+                            ),
+                        ),
+                    )
                 )
 
-                simulated.remove(
-                    give_resource,
-                    1,
-                )
+                if simulated is None:
+                    continue
 
-                simulated.add(
-                    receive_resource,
-                    1,
-                )
-
-                after_value = hand_value(
-                    simulated
+                after_value = (
+                    self._domestic_trade_hand_value(
+                        board,
+                        players,
+                        player,
+                        simulated,
+                    )
                 )
 
                 gain = (
@@ -864,6 +951,273 @@ class OneStepLookaheadAgent(
                 -item[2],
                 item[3],
                 item[4],
+            )
+        )
+
+        return candidates[0][-1]
+
+    def evaluate_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        offer,
+    ) -> bool:
+        """
+        Evaluate an incoming domestic trade directly with
+        Search-v2's own hand-value model.
+        """
+        if not self.search_domestic_trades:
+            return super().evaluate_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                offer,
+            )
+
+        from catanlab.trading import (
+            validate_trade_offer,
+        )
+
+        if (
+            offer.recipient_id
+            != player.player_id
+        ):
+            return False
+
+        # The recipient is allowed to verify that the
+        # offered transaction is actually feasible because
+        # they know their own hand. The game engine also
+        # performs this validation.
+        if not validate_trade_offer(
+            offer,
+            inventories,
+        ):
+            return False
+
+        proposer = players[
+            offer.proposer_id
+        ]
+
+        # Preserve the established public-threat safeguard.
+        if proposer.public_victory_points >= 9:
+            return False
+
+        inventory = inventories[
+            player.player_id
+        ]
+
+        before_value = (
+            self._domestic_trade_hand_value(
+                board,
+                players,
+                player,
+                inventory,
+            )
+        )
+
+        # From recipient perspective:
+        #   give     = offer.receive
+        #   receive  = offer.give
+        simulated = (
+            self._simulate_domestic_trade_hand(
+                inventory,
+                outgoing=offer.receive,
+                incoming=offer.give,
+            )
+        )
+
+        if simulated is None:
+            return False
+
+        after_value = (
+            self._domestic_trade_hand_value(
+                board,
+                players,
+                player,
+                simulated,
+            )
+        )
+
+        gain = (
+            after_value
+            - before_value
+        )
+
+        # Require a real improvement rather than accepting
+        # neutral exchanges that can create excessive
+        # negotiation churn.
+        return gain > 1e-9
+
+    def counter_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        offer,
+        attempted_offers=None,
+    ):
+        """
+        Generate the best improving 1-for-1 Search-v2
+        counteroffer.
+
+        Candidate requests do not inspect the other
+        player's hidden resource identities.
+        """
+        if not self.search_domestic_trades:
+            return super().counter_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                offer,
+                attempted_offers=(
+                    attempted_offers
+                ),
+            )
+
+        from catanlab.resources import Resource
+        from catanlab.trading import (
+            TradeOffer,
+            validate_trade_terms,
+        )
+
+        if (
+            offer.recipient_id
+            != player.player_id
+        ):
+            return None
+
+        if attempted_offers is None:
+            attempted_offers = set()
+
+        inventory = inventories[
+            player.player_id
+        ]
+
+        resources = (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        )
+
+        before_value = (
+            self._domestic_trade_hand_value(
+                board,
+                players,
+                player,
+                inventory,
+            )
+        )
+
+        candidates = []
+
+        for give_resource in resources:
+            if inventory.count(
+                give_resource
+            ) <= 0:
+                continue
+
+            for receive_resource in resources:
+                if (
+                    receive_resource
+                    == give_resource
+                ):
+                    continue
+
+                simulated = (
+                    self._simulate_domestic_trade_hand(
+                        inventory,
+                        outgoing=(
+                            (
+                                give_resource,
+                                1,
+                            ),
+                        ),
+                        incoming=(
+                            (
+                                receive_resource,
+                                1,
+                            ),
+                        ),
+                    )
+                )
+
+                if simulated is None:
+                    continue
+
+                after_value = (
+                    self._domestic_trade_hand_value(
+                        board,
+                        players,
+                        player,
+                        simulated,
+                    )
+                )
+
+                gain = (
+                    after_value
+                    - before_value
+                )
+
+                if gain <= 1e-9:
+                    continue
+
+                candidate = TradeOffer(
+                    proposer_id=(
+                        player.player_id
+                    ),
+                    recipient_id=(
+                        offer.proposer_id
+                    ),
+                    give=(
+                        (
+                            give_resource,
+                            1,
+                        ),
+                    ),
+                    receive=(
+                        (
+                            receive_resource,
+                            1,
+                        ),
+                    ),
+                )
+
+                if candidate in attempted_offers:
+                    continue
+
+                # Structural validation only. Do not use
+                # validate_trade_offer(), because doing so
+                # here would reveal whether the opponent
+                # actually owns the requested card.
+                if not validate_trade_terms(
+                    candidate
+                ):
+                    continue
+
+                candidates.append(
+                    (
+                        gain,
+                        give_resource.value,
+                        receive_resource.value,
+                        candidate,
+                    )
+                )
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda item: (
+                -item[0],
+                item[1],
+                item[2],
             )
         )
 
