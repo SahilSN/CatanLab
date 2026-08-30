@@ -3460,3 +3460,311 @@ def test_year_of_plenty_uses_explicit_resource_pair():
         DevCardType.YEAR_OF_PLENTY.value
         in player.played_dev_cards
     )
+
+
+
+def test_roll_seven_uses_agent_robber_choices():
+    import random
+
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class RobberChoiceAgent(TurnAgent):
+        def __init__(self):
+            self.tile_calls = 0
+            self.victim_calls = 0
+
+        def choose_robber_tile(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+        ):
+            self.tile_calls += 1
+            return 1
+
+        def choose_robber_victim(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+        ):
+            self.victim_calls += 1
+            return 1
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=2,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(1.0, 0.0),
+                adjacent_tiles=[1],
+            ),
+        ],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+        ),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WHEAT
+    )
+
+    agent = RobberChoiceAgent()
+
+    run_turn(
+        board,
+        players,
+        inventories,
+        [
+            agent,
+            PassAgent(),
+        ],
+        player_id=0,
+        roll=7,
+        rng=random.Random(0),
+    )
+
+    assert agent.tile_calls == 1
+    assert agent.victim_calls == 1
+
+    assert board.robber_tile_id == 1
+
+    assert inventories[0].count(
+        Resource.WHEAT
+    ) == 1
+
+    assert inventories[1].count(
+        Resource.WHEAT
+    ) == 0
+
+
+def test_knight_uses_agent_robber_choices():
+    import random
+
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.devcard_policy import (
+        DevCardDecision,
+    )
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class KnightRobberAgent(TurnAgent):
+        def __init__(self):
+            self.tile_calls = 0
+            self.victim_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            return DevCardDecision(
+                card=DevCardType.KNIGHT,
+                utility=10.0,
+            )
+
+        def choose_robber_tile(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+        ):
+            self.tile_calls += 1
+            return 1
+
+        def choose_robber_victim(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+        ):
+            self.victim_calls += 1
+            return 1
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=2,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(1.0, 0.0),
+                adjacent_tiles=[1],
+            ),
+        ],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+            dev_cards=[
+                DevCardType.KNIGHT.value,
+            ],
+        ),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WHEAT
+    )
+
+    agent = KnightRobberAgent()
+
+    run_turn(
+        board,
+        players,
+        inventories,
+        [
+            agent,
+            PassAgent(),
+        ],
+        player_id=0,
+        roll=2,
+        rng=random.Random(0),
+    )
+
+    assert agent.tile_calls == 1
+    assert agent.victim_calls == 1
+
+    assert board.robber_tile_id == 1
+    assert players[0].knights_played == 1
+
+    assert inventories[0].count(
+        Resource.WHEAT
+    ) == 1
+
+    assert inventories[1].count(
+        Resource.WHEAT
+    ) == 0

@@ -145,6 +145,45 @@ class TurnAgent:
     ) -> TurnAction:
         raise NotImplementedError
 
+    def choose_robber_tile(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+    ):
+        """
+        Choose the tile to receive the robber.
+
+        The default implementation preserves the
+        Core-v1 strategic robber heuristic.
+        """
+        return _knight_target_tile(
+            board,
+            players,
+            inventories,
+            player,
+        )
+
+    def choose_robber_victim(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+    ):
+        """
+        Choose which eligible adjacent opponent to rob.
+
+        The default implementation preserves the
+        Core-v1 strategic victim heuristic.
+        """
+        return _choose_robber_victim(
+            board,
+            players,
+            inventories,
+            player,
+        )
 
     def choose_discards(
         self,
@@ -995,6 +1034,7 @@ def _execute_dev_card_decision(
     players: list[PlayerState],
     inventories: list[PlayerInventory],
     player: PlayerState,
+    agent: TurnAgent,
     decision,
     rng: random.Random,
     bank: ResourceBank | None = None,
@@ -1094,7 +1134,7 @@ def _execute_dev_card_decision(
         return True
 
     if decision.card == DevCardType.KNIGHT:
-        tile_id = _knight_target_tile(
+        tile_id = agent.choose_robber_tile(
             board,
             players,
             inventories,
@@ -1115,7 +1155,7 @@ def _execute_dev_card_decision(
         )
 
         victim_id = (
-            _choose_robber_victim(
+            agent.choose_robber_victim(
                 board,
                 players,
                 inventories,
@@ -1567,6 +1607,7 @@ def run_turn(
             players,
             inventories,
             player,
+            agent,
             decision,
             rng,
             bank=bank,
@@ -1746,7 +1787,7 @@ def run_turn(
             rob_adjacent_player,
         )
 
-        robber_target = _knight_target_tile(
+        robber_target = agent.choose_robber_tile(
             board,
             players,
             inventories,
@@ -1760,7 +1801,7 @@ def run_turn(
             )
 
             victim_id = (
-                _choose_robber_victim(
+                agent.choose_robber_victim(
                     board,
                     players,
                     inventories,
