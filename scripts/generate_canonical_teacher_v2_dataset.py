@@ -5,7 +5,7 @@ from pathlib import Path
 
 from catanlab.rl_teacher_generation import (
     canonical_teacher_v2_config,
-    generate_teacher_v2_dataset,
+    generate_teacher_v2_dataset_resumable,
 )
 
 
@@ -37,9 +37,11 @@ def main():
         args.split
     )
 
-    result = generate_teacher_v2_dataset(
-        args.output_dir,
-        config,
+    result = (
+        generate_teacher_v2_dataset_resumable(
+            args.output_dir,
+            config,
+        )
     )
 
     metadata = result["metadata"]

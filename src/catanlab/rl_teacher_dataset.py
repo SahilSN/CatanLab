@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -272,6 +273,52 @@ def save_teacher_v2_jsonl(
             handle.write("\n")
 
             count += 1
+
+    return count
+
+
+def append_teacher_v2_jsonl(
+    path,
+    examples,
+) -> int:
+    """
+    Append teacher-v2 examples using exactly the same
+    record encoding as save_teacher_v2_jsonl().
+    """
+    path = Path(path)
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    count = 0
+
+    with path.open(
+        "a",
+        encoding="utf-8",
+    ) as handle:
+        for example in examples:
+            record = (
+                teacher_v2_example_to_record(
+                    example
+                )
+            )
+
+            handle.write(
+                json.dumps(
+                    record,
+                    separators=(",", ":"),
+                )
+            )
+            handle.write("\n")
+
+            count += 1
+
+        handle.flush()
+        os.fsync(
+            handle.fileno()
+        )
 
     return count
 
