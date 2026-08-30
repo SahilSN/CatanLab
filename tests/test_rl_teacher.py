@@ -802,3 +802,1008 @@ def test_recording_search_agent_records_monopoly_resource_v2_example():
         agent._pending_monopoly_resource
         is None
     )
+
+
+def test_recording_search_agent_records_year_of_plenty_v2_example():
+    from catanlab.devcard_policy import (
+        DevCardPhase,
+    )
+    from catanlab.devcards import (
+        DevCardType,
+    )
+    from catanlab.economy import (
+        PlayerInventory,
+    )
+    from catanlab.resources import Resource
+    from catanlab.rl_special_actions import (
+        year_of_plenty_decision_input,
+    )
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+
+    (
+        board,
+        players,
+        inventories,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    player = players[0]
+
+    player.settlements.append(
+        board.vertices[0].id
+    )
+
+    player.dev_cards.append(
+        DevCardType.YEAR_OF_PLENTY.value
+    )
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+
+    inventory.add(
+        Resource.ORE,
+        1,
+    )
+
+    inventories[0] = inventory
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=False,
+        search_year_of_plenty=True,
+        search_road_building=False,
+        search_monopoly=False,
+    )
+
+    decision = agent.choose_dev_card_play(
+        board,
+        players,
+        player,
+        inventories,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert (
+        decision.card
+        == DevCardType.YEAR_OF_PLENTY
+    )
+
+    assert decision.resources is None
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.YEAR_OF_PLENTY
+    )
+
+    decision_input = (
+        year_of_plenty_decision_input(
+            bank
+        )
+    )
+
+    assert decision_input.decode(
+        example.label
+    ) == (
+        Resource.ORE,
+        Resource.ORE,
+    )
+
+    assert example.legal_mask[
+        example.label
+    ]
+
+    # Recording must not consume Search-v2's pending
+    # execution choice.
+    assert (
+        agent._pending_year_of_plenty_resources
+        == (
+            Resource.ORE,
+            Resource.ORE,
+        )
+    )
+
+    resources = (
+        agent.choose_year_of_plenty_resources(
+            board,
+            players,
+            inventories,
+            player,
+            bank=bank,
+            suggested_resources=(
+                decision.resources
+            ),
+        )
+    )
+
+    assert resources == (
+        Resource.ORE,
+        Resource.ORE,
+    )
+
+    assert (
+        agent._pending_year_of_plenty_resources
+        is None
+    )
+
+
+def test_recording_search_agent_records_road_building_v2_example():
+    from catanlab.board import (
+        Board,
+        Edge,
+        Vertex,
+    )
+    from catanlab.devcard_policy import (
+        DevCardPhase,
+    )
+    from catanlab.devcards import (
+        DevCardType,
+    )
+    from catanlab.economy import (
+        PlayerInventory,
+    )
+    from catanlab.resources import Resource
+    from catanlab.rl_special_actions import (
+        road_building_decision_input,
+    )
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+    from catanlab.simulation import (
+        PlayerState,
+    )
+
+    (
+        _,
+        _,
+        _,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                neighbors=[1],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                neighbors=[0, 2],
+            ),
+            Vertex(
+                id=2,
+                position=(2.0, 0.0),
+                neighbors=[1],
+            ),
+        ],
+        edges=[
+            Edge(
+                vertex_a=0,
+                vertex_b=1,
+            ),
+            Edge(
+                vertex_a=1,
+                vertex_b=2,
+            ),
+        ],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+        dev_cards=[
+            DevCardType.ROAD_BUILDING.value
+        ],
+    )
+
+    players = [player]
+
+    inventory = PlayerInventory()
+
+    inventory.add(
+        Resource.WOOD,
+        1,
+    )
+    inventory.add(
+        Resource.BRICK,
+        1,
+    )
+    inventory.add(
+        Resource.SHEEP,
+        1,
+    )
+    inventory.add(
+        Resource.WHEAT,
+        1,
+    )
+
+    inventories = [inventory]
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_depth=2,
+        use_transposition_cache=False,
+        search_maritime_trades=False,
+        search_year_of_plenty=False,
+        search_road_building=True,
+        search_monopoly=False,
+    )
+
+    decision_input = (
+        road_building_decision_input(
+            board,
+            players,
+            player,
+        )
+    )
+
+    decision = agent.choose_dev_card_play(
+        board,
+        players,
+        player,
+        inventories,
+        DevCardPhase.POST_ROLL,
+        dev_deck=deck,
+        bank=bank,
+    )
+
+    assert (
+        decision.card
+        == DevCardType.ROAD_BUILDING
+    )
+
+    assert decision.road_edges is None
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.ROAD_BUILDING
+    )
+
+    assert (
+        decision_input.decode(
+            example.label
+        )
+        == (
+            (0, 1),
+            (1, 2),
+        )
+    )
+
+    assert example.legal_mask[
+        example.label
+    ]
+
+    # Recording is observational: the simulator still
+    # owns consumption of the pending Search-v2 choice.
+    assert (
+        agent._pending_road_building_edges
+        == (
+            (0, 1),
+            (1, 2),
+        )
+    )
+
+    roads = (
+        agent.choose_road_building_edges(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=(
+                decision.road_edges
+            ),
+        )
+    )
+
+    assert roads == (
+        (0, 1),
+        (1, 2),
+    )
+
+    assert (
+        agent._pending_road_building_edges
+        is None
+    )
+
+
+def test_recording_search_agent_records_discard_v2_example():
+    from catanlab.board import (
+        Board,
+        Vertex,
+    )
+    from catanlab.economy import (
+        PlayerInventory,
+    )
+    from catanlab.resources import Resource
+    from catanlab.rl_special_actions import (
+        discard_decision_input,
+    )
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+    from catanlab.simulation import (
+        PlayerState,
+    )
+
+    (
+        _,
+        _,
+        _,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[],
+            ),
+        ],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+    )
+
+    inventory = PlayerInventory()
+
+    inventory.add(Resource.ORE, 2)
+    inventory.add(Resource.WHEAT, 2)
+    inventory.add(Resource.WOOD, 2)
+    inventory.add(Resource.BRICK, 2)
+
+    players = [player]
+    inventories = [inventory]
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_discard_decisions=True,
+    )
+
+    decision_input = discard_decision_input(
+        inventory,
+        4,
+    )
+
+    discarded = (
+        agent.choose_discards_with_context(
+            board,
+            players,
+            inventories,
+            player,
+            inventory,
+            4,
+            bank=bank,
+            dev_deck=deck,
+        )
+    )
+
+    assert discarded.count(
+        Resource.WOOD
+    ) == 2
+
+    assert discarded.count(
+        Resource.BRICK
+    ) == 2
+
+    assert Resource.ORE not in discarded
+    assert Resource.WHEAT not in discarded
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.DISCARD
+    )
+
+    assert (
+        decision_input.decode(
+            example.label
+        )
+        == (
+            2,
+            2,
+            0,
+            0,
+            0,
+        )
+    )
+
+    assert example.legal_mask[
+        example.label
+    ]
+
+    # Recording must not alter the returned discard choice
+    # or mutate the hand. Actual card removal remains the
+    # simulator's responsibility.
+    assert inventory.count(
+        Resource.WOOD
+    ) == 2
+
+    assert inventory.count(
+        Resource.BRICK
+    ) == 2
+
+    assert inventory.count(
+        Resource.WHEAT
+    ) == 2
+
+    assert inventory.count(
+        Resource.ORE
+    ) == 2
+
+
+def test_recording_search_agent_records_trade_proposal_v2_example():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.rl_special_actions import (
+        trade_proposal_decision_input,
+    )
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+    from catanlab.simulation import PlayerState
+    from catanlab.trading import TradeOffer
+
+    (
+        _,
+        _,
+        _,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[],
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+            settlements=[0],
+        ),
+        PlayerState(player_id=1),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(Resource.WHEAT, 2)
+    inventories[0].add(Resource.ORE, 2)
+    inventories[0].add(Resource.WOOD, 1)
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    decision_input = (
+        trade_proposal_decision_input(
+            players,
+            players[0],
+            inventories[0],
+        )
+    )
+
+    offer = agent.propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories,
+        bank=bank,
+        dev_deck=deck,
+    )
+
+    expected = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.WOOD, 1),),
+        receive=((Resource.ORE, 1),),
+    )
+
+    assert offer == expected
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.TRADE_PROPOSAL
+    )
+
+    assert (
+        decision_input.decode(
+            example.label
+        )
+        == expected
+    )
+
+    assert example.legal_mask[
+        example.label
+    ]
+
+
+def test_recording_search_agent_records_no_trade_proposal():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+    from catanlab.simulation import PlayerState
+
+    (
+        _,
+        _,
+        _,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(player_id=1),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    offer = agent.propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories,
+        bank=bank,
+        dev_deck=deck,
+    )
+
+    assert offer is None
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.TRADE_PROPOSAL
+    )
+
+    # Proposal vocab begins with explicit NO_PROPOSAL.
+    assert example.label == 0
+    assert example.legal_mask[0]
+
+
+def test_recording_search_agent_records_trade_accept():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+    from catanlab.simulation import PlayerState
+    from catanlab.trading import TradeOffer
+
+    (
+        _,
+        _,
+        _,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(Resource.ORE, 1)
+
+    inventories[1].add(Resource.WHEAT, 2)
+    inventories[1].add(Resource.ORE, 2)
+    inventories[1].add(Resource.WOOD, 1)
+
+    offer = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.ORE, 1),),
+        receive=((Resource.WOOD, 1),),
+    )
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    accepted = agent.evaluate_player_trade(
+        board,
+        players,
+        players[1],
+        inventories,
+        offer,
+        bank=bank,
+        dev_deck=deck,
+    )
+
+    assert accepted
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.TRADE_RESPONSE
+    )
+
+    # False = reject, True = accept.
+    assert example.label == 1
+    assert example.legal_mask[1]
+
+
+def test_recording_search_agent_records_trade_reject():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+    from catanlab.simulation import PlayerState
+    from catanlab.trading import TradeOffer
+
+    (
+        _,
+        _,
+        _,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(Resource.WOOD, 1)
+
+    inventories[1].add(Resource.WHEAT, 2)
+    inventories[1].add(Resource.ORE, 2)
+    inventories[1].add(Resource.WOOD, 1)
+
+    offer = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.WOOD, 1),),
+        receive=((Resource.ORE, 1),),
+    )
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    accepted = agent.evaluate_player_trade(
+        board,
+        players,
+        players[1],
+        inventories,
+        offer,
+        bank=bank,
+        dev_deck=deck,
+    )
+
+    assert not accepted
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.TRADE_RESPONSE
+    )
+
+    assert example.label == 0
+    assert example.legal_mask[0]
+
+
+def test_recording_search_agent_records_trade_counter():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.rl_special_actions import (
+        trade_counter_decision_input,
+    )
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+    from catanlab.simulation import PlayerState
+    from catanlab.trading import TradeOffer
+
+    (
+        _,
+        _,
+        _,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(Resource.WHEAT, 2)
+    inventories[1].add(Resource.ORE, 2)
+    inventories[1].add(Resource.WOOD, 1)
+
+    incoming = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.SHEEP, 1),),
+        receive=((Resource.ORE, 1),),
+    )
+
+    attempted = set()
+
+    decision_input = (
+        trade_counter_decision_input(
+            players,
+            players[1],
+            inventories[1],
+            incoming,
+            attempted_offers=attempted,
+        )
+    )
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    counter = agent.counter_player_trade(
+        board,
+        players,
+        players[1],
+        inventories,
+        incoming,
+        attempted_offers=attempted,
+        bank=bank,
+        dev_deck=deck,
+    )
+
+    expected = TradeOffer(
+        proposer_id=1,
+        recipient_id=0,
+        give=((Resource.WOOD, 1),),
+        receive=((Resource.ORE, 1),),
+    )
+
+    assert counter == expected
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.TRADE_COUNTER
+    )
+
+    assert (
+        decision_input.decode(
+            example.label
+        )
+        == expected
+    )
+
+    assert example.legal_mask[
+        example.label
+    ]
+
+
+def test_recording_search_agent_records_no_trade_counter():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+    from catanlab.simulation import PlayerState
+    from catanlab.trading import TradeOffer
+
+    (
+        _,
+        _,
+        _,
+        bank,
+        deck,
+    ) = make_fixture()
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(player_id=1),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WOOD,
+        1,
+    )
+
+    incoming = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.WOOD, 1),),
+        receive=((Resource.ORE, 1),),
+    )
+
+    agent = RecordingSearchAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    # Exclude every structurally possible counter by marking
+    # all candidate 1-for-1 offers as already attempted.
+    from catanlab.rl_special_actions import (
+        trade_counter_decision_input,
+    )
+
+    initial_input = (
+        trade_counter_decision_input(
+            players,
+            players[1],
+            inventories[1],
+            incoming,
+        )
+    )
+
+    attempted = {
+        candidate
+        for candidate in initial_input.vocabulary
+        if candidate is not None
+    }
+
+    counter = agent.counter_player_trade(
+        board,
+        players,
+        players[1],
+        inventories,
+        incoming,
+        attempted_offers=attempted,
+        bank=bank,
+        dev_deck=deck,
+    )
+
+    assert counter is None
+
+    assert len(agent.v2_examples) == 1
+
+    example = agent.v2_examples[0]
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.TRADE_COUNTER
+    )
+
+    assert example.label == 0
+    assert example.legal_mask[0]

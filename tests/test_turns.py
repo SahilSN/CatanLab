@@ -4332,3 +4332,160 @@ def test_robber_hook_dispatch_forwards_new_context():
     assert result == 3
     assert seen["bank"] is bank
     assert seen["dev_deck"] is dev_deck
+
+
+def test_discard_hook_dispatch_preserves_legacy_signature():
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.turns import (
+        _call_discard_choice_hook,
+    )
+
+    called = []
+
+    def legacy(
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+    ):
+        called.append(count)
+        return [Resource.WOOD]
+
+    inventory = PlayerInventory()
+    inventory.add(Resource.WOOD)
+
+    result = _call_discard_choice_hook(
+        legacy,
+        object(),
+        [object()],
+        [inventory],
+        object(),
+        inventory,
+        1,
+        bank=object(),
+        dev_deck=object(),
+    )
+
+    assert result == [Resource.WOOD]
+    assert called == [1]
+
+
+def test_discard_hook_dispatch_forwards_new_context():
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.turns import (
+        _call_discard_choice_hook,
+    )
+
+    seen = {}
+
+    bank = object()
+    dev_deck = object()
+
+    def contextual(
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+        bank=None,
+        dev_deck=None,
+    ):
+        seen["bank"] = bank
+        seen["dev_deck"] = dev_deck
+        return [Resource.ORE]
+
+    inventory = PlayerInventory()
+    inventory.add(Resource.ORE)
+
+    result = _call_discard_choice_hook(
+        contextual,
+        object(),
+        [object()],
+        [inventory],
+        object(),
+        inventory,
+        1,
+        bank=bank,
+        dev_deck=dev_deck,
+    )
+
+    assert result == [Resource.ORE]
+    assert seen["bank"] is bank
+    assert seen["dev_deck"] is dev_deck
+
+
+def test_trade_hook_dispatch_preserves_legacy_signature():
+    from catanlab.turns import (
+        _call_trade_choice_hook,
+    )
+
+    seen = []
+
+    def legacy(
+        board,
+        players,
+        player,
+        inventories,
+    ):
+        seen.append(True)
+        return None
+
+    result = _call_trade_choice_hook(
+        legacy,
+        object(),
+        [],
+        object(),
+        [],
+        agents=object(),
+        bank=object(),
+        dev_deck=object(),
+    )
+
+    assert result is None
+    assert seen == [True]
+
+
+def test_trade_hook_dispatch_forwards_supported_context():
+    from catanlab.turns import (
+        _call_trade_choice_hook,
+    )
+
+    bank = object()
+    deck = object()
+    agents = object()
+
+    seen = {}
+
+    def contextual(
+        board,
+        players,
+        player,
+        inventories,
+        agents=None,
+        bank=None,
+        dev_deck=None,
+    ):
+        seen["agents"] = agents
+        seen["bank"] = bank
+        seen["dev_deck"] = dev_deck
+        return None
+
+    _call_trade_choice_hook(
+        contextual,
+        object(),
+        [],
+        object(),
+        [],
+        agents=agents,
+        bank=bank,
+        dev_deck=deck,
+    )
+
+    assert seen["agents"] is agents
+    assert seen["bank"] is bank
+    assert seen["dev_deck"] is deck

@@ -295,6 +295,8 @@ class TurnAgent:
         player,
         inventory: PlayerInventory,
         count: int,
+        bank=None,
+        dev_deck=None,
     ) -> list[Resource]:
         """
         Choose discards with access to full game context.
@@ -1155,6 +1157,83 @@ def _call_robber_choice_hook(
     )
 
 
+def _call_discard_choice_hook(
+    method,
+    board,
+    players,
+    inventories,
+    player,
+    inventory,
+    count,
+    *,
+    bank=None,
+    dev_deck=None,
+):
+    """
+    Call contextual discard hooks while preserving older
+    overrides that do not yet accept bank/dev_deck.
+    """
+    from inspect import signature
+
+    parameters = signature(
+        method
+    ).parameters
+
+    kwargs = {}
+
+    if "bank" in parameters:
+        kwargs["bank"] = bank
+
+    if "dev_deck" in parameters:
+        kwargs["dev_deck"] = dev_deck
+
+    return method(
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+        **kwargs,
+    )
+
+
+def _call_trade_choice_hook(
+    method,
+    *args,
+    bank=None,
+    dev_deck=None,
+    **optional_kwargs,
+):
+    """
+    Call a domestic-trade hook while forwarding only
+    optional arguments supported by that override.
+    """
+    from inspect import signature
+
+    parameters = signature(
+        method
+    ).parameters
+
+    kwargs = {
+        name: value
+        for name, value
+        in optional_kwargs.items()
+        if name in parameters
+    }
+
+    if "bank" in parameters:
+        kwargs["bank"] = bank
+
+    if "dev_deck" in parameters:
+        kwargs["dev_deck"] = dev_deck
+
+    return method(
+        *args,
+        **kwargs,
+    )
+
+
 def _execute_dev_card_decision(
     board: Board,
     players: list[PlayerState],
@@ -1430,6 +1509,8 @@ def _run_trade_sequence(
     agents,
     initial_offer,
     remaining_offer_budget,
+    bank=None,
+    dev_deck=None,
 ):
     """
     Run one bounded negotiation between two players.
@@ -1483,12 +1564,15 @@ def _run_trade_sequence(
             recipient_id
         ]
 
-        if recipient_agent.evaluate_player_trade(
+        if _call_trade_choice_hook(
+            recipient_agent.evaluate_player_trade,
             board,
             players,
             recipient,
             inventories,
             offer,
+            bank=bank,
+            dev_deck=dev_deck,
         ):
             execute_player_trade(
                 offer,
@@ -1501,7 +1585,8 @@ def _run_trade_sequence(
             )
 
         counteroffer = (
-            recipient_agent.counter_player_trade(
+            _call_trade_choice_hook(
+                recipient_agent.counter_player_trade,
                 board,
                 players,
                 recipient,
@@ -1510,6 +1595,8 @@ def _run_trade_sequence(
                 attempted_offers=(
                     attempted_offers
                 ),
+                bank=bank,
+                dev_deck=dev_deck,
             )
         )
 
@@ -1544,6 +1631,8 @@ def _run_one_domestic_trade_sequence(
     player,
     agent,
     remaining_offer_budget,
+    bank=None,
+    dev_deck=None,
 ):
     """
     Give the active player one opportunity to start
@@ -1564,28 +1653,18 @@ def _run_one_domestic_trade_sequence(
             0,
         )
 
-    try:
-        initial_offer = (
-            agent.propose_player_trade(
-                board,
-                players,
-                player,
-                inventories,
-                agents=agents,
-            )
+    initial_offer = (
+        _call_trade_choice_hook(
+            agent.propose_player_trade,
+            board,
+            players,
+            player,
+            inventories,
+            agents=agents,
+            bank=bank,
+            dev_deck=dev_deck,
         )
-    except TypeError:
-        # Backward compatibility for simple custom
-        # test/baseline agents implementing the older
-        # proposal signature.
-        initial_offer = (
-            agent.propose_player_trade(
-                board,
-                players,
-                player,
-                inventories,
-            )
-        )
+    )
 
     if initial_offer is None:
         return (
@@ -1609,6 +1688,8 @@ def _run_one_domestic_trade_sequence(
         agents,
         initial_offer,
         remaining_offer_budget,
+        bank=bank,
+        dev_deck=dev_deck,
     )
 
 
@@ -1844,9 +1925,10 @@ def run_turn(
                 // 2
             )
 
-            discarded = agents[
-                pid
-            ].choose_discards_with_context(
+            discarded = _call_discard_choice_hook(
+                agents[
+                    pid
+                ].choose_discards_with_context,
                 board,
                 players,
                 inventories,
@@ -1855,6 +1937,8 @@ def run_turn(
                 ],
                 other_inventory,
                 discard_count,
+                bank=bank,
+                dev_deck=dev_deck,
             )
 
             # Defensive validation: an agent must
@@ -2072,6 +2156,8 @@ def run_turn(
                     player,
                     agent,
                     remaining_trade_budget,
+                    bank=bank,
+                    dev_deck=dev_deck,
                 )
             )
 

@@ -1231,6 +1231,8 @@ class OneStepLookaheadAgent(
         player,
         inventory,
         count,
+        bank=None,
+        dev_deck=None,
     ):
         """
         Search over legal discard multisets and retain
@@ -1249,6 +1251,8 @@ class OneStepLookaheadAgent(
                 player,
                 inventory,
                 count,
+                bank=bank,
+                dev_deck=dev_deck,
             )
 
         if count <= 0:

@@ -15,9 +15,16 @@ from catanlab.observation_encoder import (
     encode_game_observation,
 )
 from catanlab.rl_special_actions import (
+    discard_counts,
+    discard_decision_input,
     monopoly_resource_decision_input,
+    road_building_decision_input,
     robber_tile_decision_input,
     robber_victim_decision_input,
+    trade_counter_decision_input,
+    trade_proposal_decision_input,
+    trade_response_decision_input,
+    year_of_plenty_decision_input,
 )
 from catanlab.search_agent import (
     OneStepLookaheadAgent,
@@ -60,6 +67,8 @@ class RecordingSearchAgent(
         search_road_building: bool = True,
         search_monopoly: bool = False,
         search_robber_decisions: bool = False,
+        search_discard_decisions: bool = False,
+        search_domestic_trades: bool = False,
     ):
         super().__init__(
             strategy,
@@ -81,6 +90,12 @@ class RecordingSearchAgent(
             ),
             search_robber_decisions=(
                 search_robber_decisions
+            ),
+            search_discard_decisions=(
+                search_discard_decisions
+            ),
+            search_domestic_trades=(
+                search_domestic_trades
             ),
         )
 
@@ -132,12 +147,19 @@ class RecordingSearchAgent(
         player_id,
         decision_input,
         value,
+        allow_none_value: bool = False,
     ) -> None:
         """
         Record one categorical Search-v2 choice after
         validating it against its legal mask.
         """
-        if observation is None or value is None:
+        if observation is None:
+            return
+
+        if (
+            value is None
+            and not allow_none_value
+        ):
             return
 
         label = decision_input.encode(
@@ -220,6 +242,57 @@ class RecordingSearchAgent(
                 decision_input=decision_input,
                 value=(
                     self._pending_monopoly_resource
+                ),
+            )
+
+        if (
+            self.search_year_of_plenty
+            and self._pending_year_of_plenty_resources
+            is not None
+            and bank is not None
+        ):
+            decision_input = (
+                year_of_plenty_decision_input(
+                    bank
+                )
+            )
+
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind
+                    .YEAR_OF_PLENTY
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=(
+                    self._pending_year_of_plenty_resources
+                ),
+            )
+
+        if (
+            self.search_road_building
+            and self._pending_road_building_edges
+            is not None
+        ):
+            decision_input = (
+                road_building_decision_input(
+                    board,
+                    players,
+                    player,
+                )
+            )
+
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind
+                    .ROAD_BUILDING
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=(
+                    self._pending_road_building_edges
                 ),
             )
 
@@ -328,6 +401,240 @@ class RecordingSearchAgent(
             )
 
         return victim_id
+
+    def propose_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        excluded_recipients=None,
+        agents=None,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Record Search-v2's domestic-trade proposal.
+        """
+        observation = self._v2_observation(
+            board,
+            players,
+            inventories,
+            player,
+            bank,
+            dev_deck,
+        )
+
+        decision_input = (
+            trade_proposal_decision_input(
+                players,
+                player,
+                inventories[player.player_id],
+                excluded_recipients=(
+                    excluded_recipients
+                ),
+            )
+        )
+
+        offer = super().propose_player_trade(
+            board,
+            players,
+            player,
+            inventories,
+            excluded_recipients=(
+                excluded_recipients
+            ),
+            agents=agents,
+        )
+
+        if self.search_domestic_trades:
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind
+                    .TRADE_PROPOSAL
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=offer,
+                allow_none_value=True,
+            )
+
+        return offer
+
+    def evaluate_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        offer,
+        bank=None,
+        dev_deck=None,
+    ) -> bool:
+        """
+        Record Search-v2's accept/reject decision.
+        """
+        observation = self._v2_observation(
+            board,
+            players,
+            inventories,
+            player,
+            bank,
+            dev_deck,
+        )
+
+        decision_input = (
+            trade_response_decision_input(
+                offer,
+                inventories,
+            )
+        )
+
+        accepted = (
+            super().evaluate_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                offer,
+            )
+        )
+
+        if self.search_domestic_trades:
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind
+                    .TRADE_RESPONSE
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=accepted,
+            )
+
+        return accepted
+
+    def counter_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        offer,
+        attempted_offers=None,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Record Search-v2's counteroffer decision.
+        """
+        observation = self._v2_observation(
+            board,
+            players,
+            inventories,
+            player,
+            bank,
+            dev_deck,
+        )
+
+        decision_input = (
+            trade_counter_decision_input(
+                players,
+                player,
+                inventories[player.player_id],
+                offer,
+                attempted_offers=(
+                    attempted_offers
+                ),
+            )
+        )
+
+        counteroffer = (
+            super().counter_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                offer,
+                attempted_offers=(
+                    attempted_offers
+                ),
+            )
+        )
+
+        if self.search_domestic_trades:
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind
+                    .TRADE_COUNTER
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=counteroffer,
+                allow_none_value=True,
+            )
+
+        return counteroffer
+
+    def choose_discards_with_context(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Record Search-v2's strategic discard multiset.
+        """
+        observation = self._v2_observation(
+            board,
+            players,
+            inventories,
+            player,
+            bank,
+            dev_deck,
+        )
+
+        decision_input = (
+            discard_decision_input(
+                inventory,
+                count,
+            )
+        )
+
+        discarded = (
+            super().choose_discards_with_context(
+                board,
+                players,
+                inventories,
+                player,
+                inventory,
+                count,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+        )
+
+        if self.search_discard_decisions:
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind.DISCARD
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=discard_counts(
+                    discarded
+                ),
+            )
+
+        return discarded
 
     def choose_action(
         self,
