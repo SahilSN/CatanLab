@@ -8,6 +8,8 @@ from pathlib import Path
 from catanlab.game import run_game
 from catanlab.rl_teacher import (
     RecordingSearchAgent,
+    TeacherDecisionKind,
+    TeacherExample,
     TeacherV2Example,
 )
 from catanlab.rl_teacher_dataset import (
@@ -25,10 +27,42 @@ DEFAULT_TEACHER_STRATEGIES = (
 )
 
 
+CANONICAL_TEACHER_V2_PROTOCOL = (
+    "realism-v2-v1"
+)
+
+CANONICAL_TEACHER_V2_MAX_TURNS = 2000
+CANONICAL_TEACHER_V2_SEARCH_DEPTH = 2
+
+CANONICAL_TEACHER_V2_TRAIN_SEED_START = (
+    1_000_000
+)
+CANONICAL_TEACHER_V2_TRAIN_SEED_COUNT = (
+    2_000
+)
+
+CANONICAL_TEACHER_V2_VALIDATION_SEED_START = (
+    1_100_000
+)
+CANONICAL_TEACHER_V2_VALIDATION_SEED_COUNT = (
+    250
+)
+
+# Seeds beginning here are intentionally reserved
+# for later held-out evaluation. They must not be
+# used for teacher training or validation.
+CANONICAL_TEACHER_V2_EVAL_SEED_START = (
+    1_200_000
+)
+
+
 @dataclass(frozen=True)
 class TeacherV2GenerationConfig:
     seed_start: int
     seed_count: int
+
+    split: str = "custom"
+    generation_protocol: str = "custom"
 
     max_turns: int = 2000
 
@@ -90,6 +124,53 @@ class TeacherV2GenerationConfig:
         )
 
 
+def canonical_teacher_v2_config(
+    split: str,
+) -> TeacherV2GenerationConfig:
+    """
+    Return the frozen realism-v2-v1 generation
+    configuration for one canonical data split.
+
+    Train and validation occupy permanently
+    disjoint seed ranges. Held-out evaluation
+    seeds are reserved separately.
+    """
+    if split == "train":
+        seed_start = (
+            CANONICAL_TEACHER_V2_TRAIN_SEED_START
+        )
+        seed_count = (
+            CANONICAL_TEACHER_V2_TRAIN_SEED_COUNT
+        )
+    elif split == "validation":
+        seed_start = (
+            CANONICAL_TEACHER_V2_VALIDATION_SEED_START
+        )
+        seed_count = (
+            CANONICAL_TEACHER_V2_VALIDATION_SEED_COUNT
+        )
+    else:
+        raise ValueError(
+            "Canonical teacher-v2 split must be "
+            "'train' or 'validation'."
+        )
+
+    return TeacherV2GenerationConfig(
+        seed_start=seed_start,
+        seed_count=seed_count,
+        split=split,
+        generation_protocol=(
+            CANONICAL_TEACHER_V2_PROTOCOL
+        ),
+        max_turns=(
+            CANONICAL_TEACHER_V2_MAX_TURNS
+        ),
+        search_depth=(
+            CANONICAL_TEACHER_V2_SEARCH_DEPTH
+        ),
+    )
+
+
 def _build_recording_agent(
     strategy: StrategyType,
     config: TeacherV2GenerationConfig,
@@ -136,12 +217,52 @@ def build_recording_agents(
     ]
 
 
+def ordinary_teacher_example_to_v2(
+    example: TeacherExample,
+) -> TeacherV2Example:
+    """
+    Convert one legacy ordinary-action supervision example
+    into the unified realism-v2 dataset schema.
+
+    The legacy TeacherExample remains unchanged so existing
+    Core-v1 BC and DAgger code can continue consuming it.
+    """
+    return TeacherV2Example(
+        decision_kind=(
+            TeacherDecisionKind
+            .ORDINARY_ACTION
+        ),
+        observation=example.observation,
+        player_id=example.player_id,
+        label=example.action_id,
+        legal_mask=example.legal_mask,
+        candidate_features=None,
+    )
+
+
 def collect_agent_v2_examples(
     agents,
 ) -> list[TeacherV2Example]:
+    """
+    Collect a complete unified teacher corpus.
+
+    For each seat, ordinary actions are converted from the
+    legacy TeacherExample schema, followed by that agent's
+    structured realism-v2 examples.
+
+    Training examples do not require temporal interleaving;
+    this ordering is deterministic and preserves all labels.
+    """
     examples = []
 
     for agent in agents:
+        examples.extend(
+            ordinary_teacher_example_to_v2(
+                example
+            )
+            for example in agent.examples
+        )
+
         examples.extend(
             agent.v2_examples
         )
@@ -266,6 +387,10 @@ def teacher_v2_metadata(
         "dataset_version": (
             TEACHER_V2_DATASET_VERSION
         ),
+        "generation_protocol": (
+            config.generation_protocol
+        ),
+        "split": config.split,
         "seed_start": config.seed_start,
         "seed_count": config.seed_count,
         "seeds": list(
