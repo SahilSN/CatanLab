@@ -406,3 +406,224 @@ def test_all_realism_v2_categorical_kinds_fit_request_contract():
                 )
                 == action_id
             )
+
+
+def test_fixed_head_policy_satisfies_learned_policy_contract():
+    import torch
+
+    from catanlab.rl_decision_policy import (
+        TorchFixedHeadDecisionPolicy,
+        choose_decision_value,
+    )
+    from catanlab.rl_model import (
+        RealismV2ActorCritic,
+    )
+    from catanlab.resources import Resource
+    from catanlab.rl_special_actions import (
+        monopoly_resource_decision_input,
+    )
+
+    model = RealismV2ActorCritic()
+
+    # Force deterministic preference for ORE.
+    with torch.no_grad():
+        model.monopoly_resource_head.weight.zero_()
+
+        model.monopoly_resource_head.bias.copy_(
+            torch.tensor([
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                10.0,
+            ])
+        )
+
+    decision_input = (
+        monopoly_resource_decision_input()
+    )
+
+    request = LearnedDecisionRequest(
+        decision_kind=(
+            TeacherDecisionKind
+            .MONOPOLY_RESOURCE
+        ),
+        observation=tuple(
+            0.0
+            for _ in range(1138)
+        ),
+        decision_input=decision_input,
+    )
+
+    policy = TorchFixedHeadDecisionPolicy(
+        model,
+        deterministic=True,
+    )
+
+    action_id = policy.choose_decision(
+        request
+    )
+
+    assert action_id == 4
+
+    assert (
+        choose_decision_value(
+            policy,
+            request,
+        )
+        == Resource.ORE
+    )
+
+
+def test_fixed_head_policy_respects_legal_mask():
+    import torch
+
+    from catanlab.rl_decision_policy import (
+        TorchFixedHeadDecisionPolicy,
+    )
+    from catanlab.rl_model import (
+        RealismV2ActorCritic,
+    )
+    from catanlab.rl_special_actions import (
+        CategoricalDecisionInput,
+    )
+
+    model = RealismV2ActorCritic()
+
+    with torch.no_grad():
+        model.trade_response_head.weight.zero_()
+
+        # Strongly prefer ACCEPT, but mask it.
+        model.trade_response_head.bias.copy_(
+            torch.tensor([
+                0.0,
+                100.0,
+            ])
+        )
+
+    request = LearnedDecisionRequest(
+        decision_kind=(
+            TeacherDecisionKind
+            .TRADE_RESPONSE
+        ),
+        observation=tuple(
+            0.0
+            for _ in range(1138)
+        ),
+        decision_input=(
+            CategoricalDecisionInput(
+                vocabulary=(
+                    False,
+                    True,
+                ),
+                legal_mask=(
+                    True,
+                    False,
+                ),
+            )
+        ),
+    )
+
+    policy = TorchFixedHeadDecisionPolicy(
+        model,
+        deterministic=True,
+    )
+
+    assert (
+        policy.choose_decision(
+            request
+        )
+        == 0
+    )
+
+
+def test_fixed_head_policy_rejects_dynamic_kind():
+    from catanlab.rl_decision_policy import (
+        TorchFixedHeadDecisionPolicy,
+    )
+    from catanlab.rl_model import (
+        RealismV2ActorCritic,
+    )
+    from catanlab.rl_special_actions import (
+        CategoricalDecisionInput,
+    )
+
+    model = RealismV2ActorCritic()
+
+    request = LearnedDecisionRequest(
+        decision_kind=(
+            TeacherDecisionKind
+            .ROBBER_TILE
+        ),
+        observation=tuple(
+            0.0
+            for _ in range(1138)
+        ),
+        decision_input=(
+            CategoricalDecisionInput(
+                vocabulary=(0, 1),
+                legal_mask=(True, True),
+            )
+        ),
+    )
+
+    policy = TorchFixedHeadDecisionPolicy(
+        model,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="does not support dynamic",
+    ):
+        policy.choose_decision(
+            request
+        )
+
+
+def test_fixed_head_policy_rejects_dimension_mismatch():
+    from catanlab.rl_decision_policy import (
+        TorchFixedHeadDecisionPolicy,
+    )
+    from catanlab.rl_model import (
+        RealismV2ActorCritic,
+    )
+    from catanlab.rl_special_actions import (
+        CategoricalDecisionInput,
+    )
+
+    model = RealismV2ActorCritic()
+
+    request = LearnedDecisionRequest(
+        decision_kind=(
+            TeacherDecisionKind
+            .MONOPOLY_RESOURCE
+        ),
+        observation=tuple(
+            0.0
+            for _ in range(1138)
+        ),
+        decision_input=(
+            CategoricalDecisionInput(
+                vocabulary=(
+                    "a",
+                    "b",
+                ),
+                legal_mask=(
+                    True,
+                    True,
+                ),
+            )
+        ),
+    )
+
+    policy = TorchFixedHeadDecisionPolicy(
+        model,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="dimension does not match",
+    ):
+        policy.choose_decision(
+            request
+        )

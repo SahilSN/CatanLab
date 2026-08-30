@@ -152,3 +152,120 @@ def choose_decision_value(
     return request.decision_input.decode(
         action_id
     )
+
+
+class TorchFixedHeadDecisionPolicy:
+    """
+    Adapter from RealismV2ActorCritic fixed decision heads
+    to the LearnedDecisionPolicy action-ID contract.
+
+    Supported kinds:
+        MONOPOLY_RESOURCE
+        YEAR_OF_PLENTY
+        TRADE_RESPONSE
+    """
+
+    def __init__(
+        self,
+        model,
+        *,
+        deterministic: bool = True,
+        seed: int | None = None,
+    ):
+        import torch
+
+        self.model = model
+        self.deterministic = deterministic
+
+        self.generator = torch.Generator()
+
+        if seed is not None:
+            self.generator.manual_seed(
+                seed
+            )
+
+    def choose_decision(
+        self,
+        request: LearnedDecisionRequest,
+    ) -> int:
+        import torch
+
+        from catanlab.rl_model import (
+            mask_policy_logits,
+        )
+
+        if not self.model.is_fixed_decision_kind(
+            request.decision_kind
+        ):
+            raise ValueError(
+                "TorchFixedHeadDecisionPolicy does not "
+                "support dynamic decision kind: "
+                f"{request.decision_kind.value}"
+            )
+
+        expected_dim = (
+            self.model.fixed_decision_dim(
+                request.decision_kind
+            )
+        )
+
+        if request.action_dim != expected_dim:
+            raise ValueError(
+                "Decision-space dimension does not match "
+                "the model head: "
+                f"kind={request.decision_kind.value}, "
+                f"request_dim={request.action_dim}, "
+                f"model_dim={expected_dim}"
+            )
+
+        observation = torch.tensor(
+            request.observation,
+            dtype=torch.float32,
+        ).unsqueeze(0)
+
+        legal_mask = torch.tensor(
+            request.legal_mask,
+            dtype=torch.bool,
+        ).unsqueeze(0)
+
+        self.model.eval()
+
+        with torch.no_grad():
+            logits = (
+                self.model.fixed_decision_logits(
+                    observation,
+                    request.decision_kind,
+                )
+            )
+
+            masked_logits = mask_policy_logits(
+                logits,
+                legal_mask,
+            )
+
+            if self.deterministic:
+                action_id = int(
+                    torch.argmax(
+                        masked_logits,
+                        dim=-1,
+                    ).item()
+                )
+
+            else:
+                probabilities = torch.softmax(
+                    masked_logits,
+                    dim=-1,
+                )
+
+                action_id = int(
+                    torch.multinomial(
+                        probabilities,
+                        num_samples=1,
+                        generator=self.generator,
+                    ).item()
+                )
+
+        return validate_decision_action_id(
+            request,
+            action_id,
+        )

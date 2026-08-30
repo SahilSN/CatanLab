@@ -353,3 +353,163 @@ class FactorizedCatanActorCritic(nn.Module):
         )
 
         return flat_logits, value
+
+
+class RealismV2ActorCritic(
+    FactorizedCatanActorCritic
+):
+    """
+    Factorized ordinary-action actor-critic extended with
+    the fixed-size realism-v2 categorical decision heads.
+
+    Ordinary `forward()` behavior is inherited unchanged:
+        observation -> (202 ordinary logits, value)
+
+    Phase-specific decisions are queried explicitly through
+    `fixed_decision_logits()`.
+
+    Dynamic decision spaces are deliberately not handled
+    here. They will be added through candidate scoring in
+    R2.6b2.
+    """
+
+    MONOPOLY_RESOURCE_DIM = 5
+    YEAR_OF_PLENTY_DIM = 15
+    TRADE_RESPONSE_DIM = 2
+
+    def __init__(
+        self,
+        observation_dim: int = 1138,
+        action_dim: int = 202,
+        hidden_dim: int = 256,
+    ):
+        super().__init__(
+            observation_dim=observation_dim,
+            action_dim=action_dim,
+            hidden_dim=hidden_dim,
+        )
+
+        self.monopoly_resource_head = nn.Linear(
+            hidden_dim,
+            self.MONOPOLY_RESOURCE_DIM,
+        )
+
+        self.year_of_plenty_head = nn.Linear(
+            hidden_dim,
+            self.YEAR_OF_PLENTY_DIM,
+        )
+
+        self.trade_response_head = nn.Linear(
+            hidden_dim,
+            self.TRADE_RESPONSE_DIM,
+        )
+
+    @staticmethod
+    def is_fixed_decision_kind(
+        decision_kind,
+    ) -> bool:
+        """
+        Return whether this model currently owns a fixed
+        realism-v2 categorical head for `decision_kind`.
+        """
+        from catanlab.rl_teacher import (
+            TeacherDecisionKind,
+        )
+
+        return decision_kind in {
+            TeacherDecisionKind.MONOPOLY_RESOURCE,
+            TeacherDecisionKind.YEAR_OF_PLENTY,
+            TeacherDecisionKind.TRADE_RESPONSE,
+        }
+
+    def fixed_decision_dim(
+        self,
+        decision_kind,
+    ) -> int:
+        """
+        Return the fixed output dimension for one supported
+        realism-v2 decision kind.
+        """
+        from catanlab.rl_teacher import (
+            TeacherDecisionKind,
+        )
+
+        if (
+            decision_kind
+            == TeacherDecisionKind
+            .MONOPOLY_RESOURCE
+        ):
+            return self.MONOPOLY_RESOURCE_DIM
+
+        if (
+            decision_kind
+            == TeacherDecisionKind
+            .YEAR_OF_PLENTY
+        ):
+            return self.YEAR_OF_PLENTY_DIM
+
+        if (
+            decision_kind
+            == TeacherDecisionKind
+            .TRADE_RESPONSE
+        ):
+            return self.TRADE_RESPONSE_DIM
+
+        raise ValueError(
+            "Decision kind does not have a fixed "
+            "realism-v2 head: "
+            f"{decision_kind!r}"
+        )
+
+    def fixed_decision_logits(
+        self,
+        observation: torch.Tensor,
+        decision_kind,
+    ) -> torch.Tensor:
+        """
+        Compute logits for one supported fixed-size
+        realism-v2 decision family.
+
+        The observation uses the same shared backbone as
+        ordinary actions and the value function.
+        """
+        from catanlab.rl_teacher import (
+            TeacherDecisionKind,
+        )
+
+        features = self.backbone(
+            observation
+        )
+
+        if (
+            decision_kind
+            == TeacherDecisionKind
+            .MONOPOLY_RESOURCE
+        ):
+            return self.monopoly_resource_head(
+                features
+            )
+
+        if (
+            decision_kind
+            == TeacherDecisionKind
+            .YEAR_OF_PLENTY
+        ):
+            return self.year_of_plenty_head(
+                features
+            )
+
+        if (
+            decision_kind
+            == TeacherDecisionKind
+            .TRADE_RESPONSE
+        ):
+            return self.trade_response_head(
+                features
+            )
+
+        raise ValueError(
+            "Decision kind does not have a fixed "
+            "realism-v2 head: "
+            f"{decision_kind!r}"
+        )
