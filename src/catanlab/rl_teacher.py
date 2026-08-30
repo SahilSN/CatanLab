@@ -177,6 +177,37 @@ class RecordingSearchAgent(
                 f"value={value!r}"
             )
 
+        from catanlab.rl_candidate_features import (
+            encode_dynamic_decision_input,
+            is_dynamic_decision_kind,
+        )
+
+        candidate_features = None
+
+        if is_dynamic_decision_kind(
+            decision_kind
+        ):
+            candidate_features = (
+                encode_dynamic_decision_input(
+                    decision_kind,
+                    decision_input,
+                )
+            )
+
+            if (
+                len(candidate_features)
+                != decision_input.action_dim
+            ):
+                raise RuntimeError(
+                    "Teacher candidate encoding changed "
+                    "categorical dimension: "
+                    f"kind={decision_kind.value}, "
+                    f"action_dim="
+                    f"{decision_input.action_dim}, "
+                    f"candidate_count="
+                    f"{len(candidate_features)}"
+                )
+
         self.v2_examples.append(
             TeacherV2Example(
                 decision_kind=decision_kind,
@@ -185,6 +216,9 @@ class RecordingSearchAgent(
                 label=label,
                 legal_mask=(
                     decision_input.legal_mask
+                ),
+                candidate_features=(
+                    candidate_features
                 ),
             )
         )
@@ -974,6 +1008,22 @@ class TeacherV2Example:
 
     legal_mask: tuple[bool, ...] | None = None
 
+    # Dynamic decision kinds require the ordered candidate
+    # representation that gives the categorical label its
+    # meaning. Fixed-size heads leave this as None because
+    # their vocabularies are globally defined.
+    candidate_features: (
+        tuple[
+            tuple[float, ...],
+            ...
+        ]
+        | None
+    ) = None
+
     @property
     def has_legal_mask(self) -> bool:
         return self.legal_mask is not None
+
+    @property
+    def has_candidate_features(self) -> bool:
+        return self.candidate_features is not None

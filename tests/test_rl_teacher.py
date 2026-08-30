@@ -779,6 +779,9 @@ def test_recording_search_agent_records_monopoly_resource_v2_example():
         example.label
     ) == Resource.ORE
 
+    assert not example.has_candidate_features
+    assert example.candidate_features is None
+
     # Recording must not consume Search-v2's pending
     # execution choice.
     assert (
@@ -1095,6 +1098,25 @@ def test_recording_search_agent_records_road_building_v2_example():
         example.label
     ]
 
+    assert example.has_candidate_features
+
+    assert len(
+        example.candidate_features
+    ) == decision_input.action_dim
+
+    assert (
+        example.candidate_features[
+            example.label
+        ]
+        == (
+            0.0,
+            1.0 / 54.0,
+            1.0 / 54.0,
+            2.0 / 54.0,
+            1.0,
+        )
+    )
+
     # Recording is observational: the simulator still
     # owns consumption of the pending Search-v2 choice.
     assert (
@@ -1242,6 +1264,25 @@ def test_recording_search_agent_records_discard_v2_example():
         example.label
     ]
 
+    assert example.has_candidate_features
+
+    assert len(
+        example.candidate_features
+    ) == decision_input.action_dim
+
+    assert (
+        example.candidate_features[
+            example.label
+        ]
+        == (
+            2.0,
+            2.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+    )
+
     # Recording must not alter the returned discard choice
     # or mutate the hand. Actual card removal remains the
     # simulator's responsibility.
@@ -1362,6 +1403,19 @@ def test_recording_search_agent_records_trade_proposal_v2_example():
     assert example.legal_mask[
         example.label
     ]
+
+    assert example.has_candidate_features
+
+    assert len(
+        example.candidate_features
+    ) == decision_input.action_dim
+
+    assert (
+        example.candidate_features[
+            example.label
+        ][0]
+        == 0.0
+    )
 
 
 def test_recording_search_agent_records_no_trade_proposal():
@@ -1807,3 +1861,87 @@ def test_recording_search_agent_records_no_trade_counter():
 
     assert example.label == 0
     assert example.legal_mask[0]
+
+
+def test_teacher_v2_example_supports_dynamic_candidate_features():
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+        TeacherV2Example,
+    )
+
+    example = TeacherV2Example(
+        decision_kind=(
+            TeacherDecisionKind.DISCARD
+        ),
+        observation=(0.0, 1.0),
+        player_id=0,
+        label=1,
+        legal_mask=(
+            True,
+            True,
+        ),
+        candidate_features=(
+            (
+                2.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ),
+            (
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+            ),
+        ),
+    )
+
+    assert example.has_legal_mask
+    assert example.has_candidate_features
+
+    assert len(
+        example.candidate_features
+    ) == 2
+
+    assert (
+        example.candidate_features[
+            example.label
+        ]
+        == (
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+    )
+
+
+def test_teacher_v2_fixed_example_needs_no_candidate_features():
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+        TeacherV2Example,
+    )
+
+    example = TeacherV2Example(
+        decision_kind=(
+            TeacherDecisionKind
+            .MONOPOLY_RESOURCE
+        ),
+        observation=(0.0, 1.0),
+        player_id=0,
+        label=4,
+        legal_mask=(
+            True,
+            True,
+            True,
+            True,
+            True,
+        ),
+    )
+
+    assert example.has_legal_mask
+    assert not example.has_candidate_features
+    assert example.candidate_features is None
