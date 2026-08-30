@@ -126,6 +126,14 @@ class OneStepLookaheadAgent(
         self.cache_hits = 0
         self.cache_misses = 0
 
+        # Short-lived arguments selected while evaluating
+        # a development-card play. These are consumed by
+        # the specialized execution hooks immediately after
+        # choose_dev_card_play() returns.
+        self._pending_monopoly_resource = None
+        self._pending_year_of_plenty_resources = None
+        self._pending_road_building_edges = None
+
     @staticmethod
     def _state_key(
         state: SearchState,
@@ -1039,6 +1047,88 @@ class OneStepLookaheadAgent(
             ),
         )
 
+    def choose_monopoly_resource(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        suggested_resource=None,
+    ):
+        """
+        Consume a Monopoly resource selected by Search v2.
+
+        Fall back to the normal TurnAgent contract when no
+        search-owned choice is pending.
+        """
+        if self._pending_monopoly_resource is not None:
+            resource = self._pending_monopoly_resource
+            self._pending_monopoly_resource = None
+            return resource
+
+        return super().choose_monopoly_resource(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_resource=suggested_resource,
+        )
+
+    def choose_year_of_plenty_resources(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        suggested_resources=None,
+    ):
+        """
+        Consume a Year of Plenty pair selected by Search v2.
+        """
+        if (
+            self._pending_year_of_plenty_resources
+            is not None
+        ):
+            resources = (
+                self._pending_year_of_plenty_resources
+            )
+            self._pending_year_of_plenty_resources = None
+            return resources
+
+        return super().choose_year_of_plenty_resources(
+            board,
+            players,
+            inventories,
+            player,
+            bank=bank,
+            suggested_resources=suggested_resources,
+        )
+
+    def choose_road_building_edges(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        suggested_edges=None,
+    ):
+        """
+        Consume Road Building edges selected by Search v2.
+        """
+        if self._pending_road_building_edges is not None:
+            edges = self._pending_road_building_edges
+            self._pending_road_building_edges = None
+            return edges
+
+        return super().choose_road_building_edges(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=suggested_edges,
+        )
+
     def choose_dev_card_play(
         self,
         board,
@@ -1054,6 +1144,10 @@ class OneStepLookaheadAgent(
         decisions while preserving the established
         heuristic policy for all other cards.
         """
+        self._pending_monopoly_resource = None
+        self._pending_year_of_plenty_resources = None
+        self._pending_road_building_edges = None
+
         baseline = super().choose_dev_card_play(
             board,
             players,
@@ -1209,10 +1303,13 @@ class OneStepLookaheadAgent(
                     utility=hold_value,
                 )
 
+            self._pending_monopoly_resource = (
+                best_resource
+            )
+
             return DevCardDecision(
                 card=DevCardType.MONOPOLY,
                 utility=best_play_value,
-                resource=best_resource,
             )
 
         # ------------------------------------------------
@@ -1347,13 +1444,14 @@ class OneStepLookaheadAgent(
                     utility=hold_value,
                 )
 
+            self._pending_year_of_plenty_resources = (
+                resource_a,
+                resource_b,
+            )
+
             return DevCardDecision(
                 card=DevCardType.YEAR_OF_PLENTY,
                 utility=best_play_value,
-                resources=(
-                    resource_a,
-                    resource_b,
-                ),
             )
 
         # ------------------------------------------------
@@ -1541,10 +1639,13 @@ class OneStepLookaheadAgent(
                 utility=hold_value,
             )
 
+        self._pending_road_building_edges = (
+            best_edges
+        )
+
         return DevCardDecision(
             card=DevCardType.ROAD_BUILDING,
             utility=best_play_value,
-            road_edges=best_edges,
         )
 
     def choose_action(

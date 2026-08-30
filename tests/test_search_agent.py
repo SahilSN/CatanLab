@@ -964,12 +964,32 @@ def test_year_of_plenty_search_enables_city():
         == DevCardType.YEAR_OF_PLENTY
     )
 
-    assert (
-        dev_decision.resources
-        == (
-            Resource.ORE,
-            Resource.ORE,
+    # Search decides PLAY vs HOLD, while the
+    # specialized hook owns the selected arguments.
+    assert dev_decision.resources is None
+
+    resources = (
+        agent.choose_year_of_plenty_resources(
+            board,
+            players,
+            inventories,
+            player,
+            bank=bank,
+            suggested_resources=(
+                dev_decision.resources
+            ),
         )
+    )
+
+    assert resources == (
+        Resource.ORE,
+        Resource.ORE,
+    )
+
+    # Pending choices are single-use.
+    assert (
+        agent._pending_year_of_plenty_resources
+        is None
     )
 
     # Reconstruct the state the YOP search evaluated.
@@ -986,7 +1006,7 @@ def test_year_of_plenty_search_enables_city():
         apply_search_year_of_plenty(
             state,
             player.player_id,
-            *dev_decision.resources,
+            *resources,
         )
     )
 
@@ -1360,12 +1380,28 @@ def test_road_building_search_enables_settlement():
         == DevCardType.ROAD_BUILDING
     )
 
-    assert (
-        dev_decision.road_edges
-        == (
-            (0, 1),
-            (1, 2),
+    assert dev_decision.road_edges is None
+
+    road_edges = (
+        agent.choose_road_building_edges(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=(
+                dev_decision.road_edges
+            ),
         )
+    )
+
+    assert road_edges == (
+        (0, 1),
+        (1, 2),
+    )
+
+    assert (
+        agent._pending_road_building_edges
+        is None
     )
 
     from catanlab.search import (
@@ -1383,7 +1419,7 @@ def test_road_building_search_enables_settlement():
                 bank,
             ),
             0,
-            *dev_decision.road_edges,
+            *road_edges,
         )
     )
 
@@ -1517,7 +1553,22 @@ def test_monopoly_search_prefers_resource_that_enables_city():
         == DevCardType.MONOPOLY
     )
 
-    assert decision.resource == Resource.ORE
+    assert decision.resource is None
+
+    resource = agent.choose_monopoly_resource(
+        board,
+        players,
+        inventories,
+        player,
+        suggested_resource=decision.resource,
+    )
+
+    assert resource == Resource.ORE
+
+    assert (
+        agent._pending_monopoly_resource
+        is None
+    )
 
     from catanlab.search import (
         apply_search_monopoly_outcome,
@@ -2095,3 +2146,59 @@ def test_search_discard_returns_only_cards_actually_held():
         discarded.count(Resource.WHEAT)
         <= 3
     )
+
+
+def test_search_dev_card_pending_choice_is_single_use():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+    )
+
+    inventories = [
+        PlayerInventory(),
+    ]
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+    )
+
+    agent._pending_monopoly_resource = (
+        Resource.ORE
+    )
+
+    first = agent.choose_monopoly_resource(
+        board,
+        [player],
+        inventories,
+        player,
+        suggested_resource=Resource.WOOD,
+    )
+
+    assert first == Resource.ORE
+
+    assert (
+        agent._pending_monopoly_resource
+        is None
+    )
+
+    second = agent.choose_monopoly_resource(
+        board,
+        [player],
+        inventories,
+        player,
+        suggested_resource=Resource.WOOD,
+    )
+
+    assert second == Resource.WOOD
