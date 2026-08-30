@@ -1145,6 +1145,7 @@ def _choose_normal_action(
     inventory: PlayerInventory,
     dev_deck: DevCardDeck | None,
     bank: ResourceBank | None = None,
+    inventories: list[PlayerInventory] | None = None,
 ) -> TurnAction:
     """
     Call an agent's normal-action policy.
@@ -1172,6 +1173,11 @@ def _choose_normal_action(
         kwargs[
             "bank"
         ] = bank
+
+    if "inventories" in parameters:
+        kwargs[
+            "inventories"
+        ] = inventories
 
     return agent.choose_action(
         board,
@@ -1930,6 +1936,7 @@ def run_turn(
             inventory,
             dev_deck,
             bank=bank,
+            inventories=inventories,
         )
 
         actions.append(
