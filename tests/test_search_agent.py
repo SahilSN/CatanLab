@@ -1670,3 +1670,231 @@ def test_monopoly_search_ignores_opponent_hidden_composition():
     )
 
     assert decision_a == decision_b
+
+
+def test_search_robber_decisions_disabled_preserves_baseline():
+    from catanlab.board import (
+        Board,
+        Tile,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.search_agent import OneStepLookaheadAgent
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=2,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    player = PlayerState(player_id=0)
+    inventories = [PlayerInventory()]
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_robber_decisions=False,
+    )
+
+    assert (
+        agent.choose_robber_tile(
+            board,
+            [player],
+            inventories,
+            player,
+        )
+        == 1
+    )
+
+
+def test_search_robber_prefers_high_threat_opponent():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.search_agent import OneStepLookaheadAgent
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=2,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+            Tile(
+                id=2,
+                coord=HexCoord(2, 0),
+                resource=Resource.WHEAT,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(1.0, 0.0),
+                adjacent_tiles=[1],
+            ),
+            Vertex(
+                id=1,
+                position=(2.0, 0.0),
+                adjacent_tiles=[2],
+            ),
+        ],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+        PlayerState(
+            player_id=2,
+            settlements=[1],
+            cities=[],
+        ),
+    ]
+
+    # Give player 2 a much larger public threat level.
+    players[2].settlements.extend(
+        [10, 11, 12, 13, 14, 15, 16]
+    )
+
+    # The extra settlement IDs above are only intended
+    # to affect public VP, but must not be dereferenced
+    # by the robber evaluator. Restore the actual board
+    # structure list and set public score through cities
+    # would require additional vertices, so instead use
+    # the simpler city target distinction below.
+    players[2].settlements = [1]
+    players[2].cities = [1]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(Resource.WOOD)
+    inventories[2].add(Resource.ORE)
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_robber_decisions=True,
+    )
+
+    assert (
+        agent.choose_robber_tile(
+            board,
+            players,
+            inventories,
+            players[0],
+        )
+        == 2
+    )
+
+
+def test_search_robber_victim_uses_public_threat():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.search_agent import OneStepLookaheadAgent
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+        ],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+        PlayerState(
+            player_id=2,
+            cities=[1],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(Resource.WOOD, 6)
+    inventories[2].add(Resource.ORE, 1)
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_robber_decisions=True,
+    )
+
+    assert (
+        agent.choose_robber_victim(
+            board,
+            players,
+            inventories,
+            players[0],
+        )
+        == 2
+    )

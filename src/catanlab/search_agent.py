@@ -87,6 +87,7 @@ class OneStepLookaheadAgent(
         search_year_of_plenty: bool = False,
         search_road_building: bool = True,
         search_monopoly: bool = False,
+        search_robber_decisions: bool = False,
     ):
         super().__init__(strategy)
 
@@ -110,6 +111,9 @@ class OneStepLookaheadAgent(
         )
         self.search_monopoly = (
             search_monopoly
+        )
+        self.search_robber_decisions = (
+            search_robber_decisions
         )
 
         self._evaluation_cache = {}
@@ -560,6 +564,212 @@ class OneStepLookaheadAgent(
             value=best.value,
             candidates=tuple(candidates),
             principal_variation=best.line,
+        )
+
+    def choose_robber_tile(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+    ):
+        """
+        Choose a robber destination using only legally
+        observable information.
+
+        Search-v2 explicitly evaluates every destination
+        rather than delegating the choice to the inherited
+        Core-v1 policy.
+        """
+        if not self.search_robber_decisions:
+            return super().choose_robber_tile(
+                board,
+                players,
+                inventories,
+                player,
+            )
+
+        from catanlab.dice import production_weight
+
+        candidates = [
+            tile
+            for tile in board.tiles
+            if tile.id != board.robber_tile_id
+        ]
+
+        if not candidates:
+            return None
+
+        def buildings_on_tile(
+            candidate_player,
+            tile_id,
+        ):
+            settlements = sum(
+                1
+                for vertex_id
+                in candidate_player.settlements
+                if tile_id
+                in board.vertices[
+                    vertex_id
+                ].adjacent_tiles
+            )
+
+            cities = sum(
+                1
+                for vertex_id
+                in candidate_player.cities
+                if tile_id
+                in board.vertices[
+                    vertex_id
+                ].adjacent_tiles
+            )
+
+            return settlements, cities
+
+        def tile_score(tile):
+            probability_weight = (
+                production_weight(tile.number)
+                if tile.number is not None
+                else 0.0
+            )
+
+            opponent_denial = 0.0
+            self_denial = 0.0
+            steal_value = 0.0
+
+            for other in players:
+                settlements, cities = (
+                    buildings_on_tile(
+                        other,
+                        tile.id,
+                    )
+                )
+
+                production_units = (
+                    settlements
+                    + 2 * cities
+                )
+
+                if production_units <= 0:
+                    continue
+
+                blocked_value = (
+                    production_units
+                    * probability_weight
+                )
+
+                if (
+                    other.player_id
+                    == player.player_id
+                ):
+                    self_denial += blocked_value
+                    continue
+
+                threat = (
+                    1.0
+                    + 0.20
+                    * other.public_victory_points
+                )
+
+                opponent_denial += (
+                    blocked_value
+                    * threat
+                )
+
+                # Resource identities are private.
+                # Total hand size is public and is the
+                # only opponent inventory information used.
+                public_hand_size = (
+                    inventories[
+                        other.player_id
+                    ].total()
+                )
+
+                if public_hand_size > 0:
+                    steal_value = max(
+                        steal_value,
+                        1.0
+                        + 0.10
+                        * min(
+                            public_hand_size,
+                            7,
+                        )
+                        + 0.20
+                        * other.public_victory_points,
+                    )
+
+            value = (
+                opponent_denial
+                - 1.75 * self_denial
+                + 0.85 * steal_value
+            )
+
+            return (
+                value,
+                -tile.id,
+            )
+
+        return max(
+            candidates,
+            key=tile_score,
+        ).id
+
+    def choose_robber_victim(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+    ):
+        """
+        Choose a robber victim using only public VP and
+        public resource-card count.
+        """
+        if not self.search_robber_decisions:
+            return super().choose_robber_victim(
+                board,
+                players,
+                inventories,
+                player,
+            )
+
+        from catanlab.devcards import (
+            players_adjacent_to_tile,
+        )
+
+        if board.robber_tile_id is None:
+            return None
+
+        adjacent = players_adjacent_to_tile(
+            board,
+            players,
+            board.robber_tile_id,
+            exclude_player_id=player.player_id,
+        )
+
+        eligible = [
+            victim_id
+            for victim_id in adjacent
+            if inventories[victim_id].total() > 0
+        ]
+
+        if not eligible:
+            return None
+
+        return max(
+            eligible,
+            key=lambda victim_id: (
+                players[
+                    victim_id
+                ].public_victory_points,
+                min(
+                    inventories[
+                        victim_id
+                    ].total(),
+                    7,
+                ),
+                -victim_id,
+            ),
         )
 
     def choose_dev_card_play(
