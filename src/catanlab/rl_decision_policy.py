@@ -269,3 +269,194 @@ class TorchFixedHeadDecisionPolicy:
             request,
             action_id,
         )
+
+
+class TorchRealismV2DecisionPolicy:
+    """
+    LearnedDecisionPolicy adapter for the complete
+    realism-v2 categorical decision model.
+
+    Fixed-size decision kinds route through the model's
+    fixed heads.
+
+    Variable-size decision kinds first encode the current
+    categorical vocabulary into candidate feature vectors,
+    then route through the dynamic candidate scorer.
+
+    The returned value is always a categorical action ID.
+    Decoding back to a simulator-facing object remains the
+    responsibility of CategoricalDecisionInput.
+    """
+
+    def __init__(
+        self,
+        model,
+        *,
+        deterministic: bool = True,
+        seed: int | None = None,
+    ):
+        import torch
+
+        self.model = model
+        self.deterministic = deterministic
+
+        self.generator = torch.Generator()
+
+        if seed is not None:
+            self.generator.manual_seed(
+                seed
+            )
+
+    def _select_action_id(
+        self,
+        logits,
+        legal_mask,
+    ) -> int:
+        import torch
+
+        from catanlab.rl_model import (
+            mask_policy_logits,
+        )
+
+        masked_logits = mask_policy_logits(
+            logits,
+            legal_mask,
+        )
+
+        if self.deterministic:
+            return int(
+                torch.argmax(
+                    masked_logits,
+                    dim=-1,
+                ).item()
+            )
+
+        probabilities = torch.softmax(
+            masked_logits,
+            dim=-1,
+        )
+
+        return int(
+            torch.multinomial(
+                probabilities,
+                num_samples=1,
+                generator=self.generator,
+            ).item()
+        )
+
+    def choose_decision(
+        self,
+        request: LearnedDecisionRequest,
+    ) -> int:
+        import torch
+
+        observation = torch.tensor(
+            request.observation,
+            dtype=torch.float32,
+        ).unsqueeze(0)
+
+        legal_mask = torch.tensor(
+            request.legal_mask,
+            dtype=torch.bool,
+        ).unsqueeze(0)
+
+        self.model.eval()
+
+        with torch.no_grad():
+            if self.model.is_fixed_decision_kind(
+                request.decision_kind
+            ):
+                expected_dim = (
+                    self.model.fixed_decision_dim(
+                        request.decision_kind
+                    )
+                )
+
+                if (
+                    request.action_dim
+                    != expected_dim
+                ):
+                    raise ValueError(
+                        "Decision-space dimension does "
+                        "not match the fixed model head: "
+                        f"kind="
+                        f"{request.decision_kind.value}, "
+                        f"request_dim="
+                        f"{request.action_dim}, "
+                        f"model_dim="
+                        f"{expected_dim}"
+                    )
+
+                logits = (
+                    self.model.fixed_decision_logits(
+                        observation,
+                        request.decision_kind,
+                    )
+                )
+
+            elif self.model.is_dynamic_decision_kind(
+                request.decision_kind
+            ):
+                from catanlab.rl_candidate_features import (
+                    encode_dynamic_decision_input,
+                )
+
+                encoded_candidates = (
+                    encode_dynamic_decision_input(
+                        request.decision_kind,
+                        request.decision_input,
+                    )
+                )
+
+                if (
+                    len(encoded_candidates)
+                    != request.action_dim
+                ):
+                    raise RuntimeError(
+                        "Dynamic candidate encoding "
+                        "changed categorical dimension: "
+                        f"kind="
+                        f"{request.decision_kind.value}, "
+                        f"request_dim="
+                        f"{request.action_dim}, "
+                        f"encoded_dim="
+                        f"{len(encoded_candidates)}"
+                    )
+
+                candidate_features = torch.tensor(
+                    encoded_candidates,
+                    dtype=torch.float32,
+                )
+
+                logits = (
+                    self.model.dynamic_decision_logits(
+                        observation,
+                        request.decision_kind,
+                        candidate_features,
+                    )
+                )
+
+            else:
+                raise ValueError(
+                    "Realism-v2 model does not support "
+                    "decision kind: "
+                    f"{request.decision_kind!r}"
+                )
+
+            if logits.shape != legal_mask.shape:
+                raise RuntimeError(
+                    "Realism-v2 decision logits do not "
+                    "match the categorical legal mask: "
+                    f"logits={logits.shape}, "
+                    f"mask={legal_mask.shape}"
+                )
+
+            action_id = self._select_action_id(
+                logits,
+                legal_mask,
+            )
+
+        return validate_decision_action_id(
+            request,
+            action_id,
+        )

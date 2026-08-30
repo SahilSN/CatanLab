@@ -404,6 +404,54 @@ class RealismV2ActorCritic(
             self.TRADE_RESPONSE_DIM,
         )
 
+        # Dynamic realism-v2 decisions have a variable
+        # number of candidates. Each decision family first
+        # projects its fixed-width candidate representation
+        # into the shared hidden width, then scores the
+        # observation/candidate pair.
+        from catanlab.rl_candidate_features import (
+            DYNAMIC_CANDIDATE_FEATURE_DIMS,
+        )
+
+        self.dynamic_candidate_projectors = (
+            nn.ModuleDict(
+                {
+                    decision_kind.value: nn.Linear(
+                        candidate_dim,
+                        hidden_dim,
+                    )
+                    for (
+                        decision_kind,
+                        candidate_dim,
+                    ) in (
+                        DYNAMIC_CANDIDATE_FEATURE_DIMS
+                        .items()
+                    )
+                }
+            )
+        )
+
+        self.dynamic_candidate_scorers = (
+            nn.ModuleDict(
+                {
+                    decision_kind.value: nn.Sequential(
+                        nn.Linear(
+                            hidden_dim * 2,
+                            hidden_dim,
+                        ),
+                        nn.ReLU(),
+                        nn.Linear(
+                            hidden_dim,
+                            1,
+                        ),
+                    )
+                    for decision_kind in (
+                        DYNAMIC_CANDIDATE_FEATURE_DIMS
+                    )
+                }
+            )
+        )
+
     @staticmethod
     def is_fixed_decision_kind(
         decision_kind,
@@ -460,6 +508,202 @@ class RealismV2ActorCritic(
             "realism-v2 head: "
             f"{decision_kind!r}"
         )
+
+    @staticmethod
+    def is_dynamic_decision_kind(
+        decision_kind,
+    ) -> bool:
+        from catanlab.rl_candidate_features import (
+            is_dynamic_decision_kind,
+        )
+
+        return is_dynamic_decision_kind(
+            decision_kind
+        )
+
+    def dynamic_candidate_feature_dim(
+        self,
+        decision_kind,
+    ) -> int:
+        from catanlab.rl_candidate_features import (
+            dynamic_candidate_feature_dim,
+        )
+
+        return dynamic_candidate_feature_dim(
+            decision_kind
+        )
+
+    def dynamic_decision_logits(
+        self,
+        observation: torch.Tensor,
+        decision_kind,
+        candidate_features: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Score a variable-size realism-v2 candidate set.
+
+        Supported shapes:
+
+            observation:
+                (..., observation_dim)
+
+            candidate_features:
+                (K, candidate_dim)
+                or
+                (..., K, candidate_dim)
+
+        Returns:
+                (..., K)
+
+        A single candidate matrix may therefore be scored
+        against one observation, while batched observations
+        may use one candidate matrix per batch element.
+        """
+        if not self.is_dynamic_decision_kind(
+            decision_kind
+        ):
+            raise ValueError(
+                "Decision kind does not use dynamic "
+                "candidate scoring: "
+                f"{decision_kind!r}"
+            )
+
+        expected_dim = (
+            self.dynamic_candidate_feature_dim(
+                decision_kind
+            )
+        )
+
+        if candidate_features.ndim < 2:
+            raise ValueError(
+                "candidate_features must have at least "
+                "two dimensions."
+            )
+
+        if (
+            candidate_features.shape[-1]
+            != expected_dim
+        ):
+            raise ValueError(
+                "Dynamic candidate feature dimension "
+                "does not match decision kind: "
+                f"kind={decision_kind.value}, "
+                f"expected={expected_dim}, "
+                f"actual={candidate_features.shape[-1]}"
+            )
+
+        if candidate_features.shape[-2] <= 0:
+            raise ValueError(
+                "Dynamic decision must contain at least "
+                "one candidate."
+            )
+
+        observation_features = self.backbone(
+            observation
+        )
+
+        key = decision_kind.value
+
+        candidate_embeddings = (
+            self.dynamic_candidate_projectors[
+                key
+            ](
+                candidate_features
+            )
+        )
+
+        # Unbatched candidate matrix:
+        #
+        #     observation_features: (..., H)
+        #     candidates:           (K, H)
+        #
+        # This is primarily the inference path used by one
+        # LearnedDecisionRequest.
+        if candidate_features.ndim == 2:
+            candidate_count = (
+                candidate_embeddings.shape[-2]
+            )
+
+            expanded_observation = (
+                observation_features
+                .unsqueeze(-2)
+                .expand(
+                    *observation_features.shape[:-1],
+                    candidate_count,
+                    observation_features.shape[-1],
+                )
+            )
+
+            expanded_candidates = (
+                candidate_embeddings
+            )
+
+            for _ in range(
+                observation_features.ndim - 1
+            ):
+                expanded_candidates = (
+                    expanded_candidates.unsqueeze(0)
+                )
+
+            expanded_candidates = (
+                expanded_candidates.expand(
+                    *observation_features.shape[:-1],
+                    candidate_count,
+                    candidate_embeddings.shape[-1],
+                )
+            )
+
+        else:
+            # Batched candidate sets must have the same
+            # leading batch shape as the observations.
+            if (
+                candidate_features.shape[:-2]
+                != observation.shape[:-1]
+            ):
+                raise ValueError(
+                    "Batched candidate features must "
+                    "match the observation batch shape: "
+                    f"{candidate_features.shape[:-2]} "
+                    "!= "
+                    f"{observation.shape[:-1]}"
+                )
+
+            candidate_count = (
+                candidate_embeddings.shape[-2]
+            )
+
+            expanded_observation = (
+                observation_features
+                .unsqueeze(-2)
+                .expand(
+                    *observation_features.shape[:-1],
+                    candidate_count,
+                    observation_features.shape[-1],
+                )
+            )
+
+            expanded_candidates = (
+                candidate_embeddings
+            )
+
+        joint = torch.cat(
+            (
+                expanded_observation,
+                expanded_candidates,
+            ),
+            dim=-1,
+        )
+
+        logits = (
+            self.dynamic_candidate_scorers[
+                key
+            ](
+                joint
+            )
+            .squeeze(-1)
+        )
+
+        return logits
 
     def fixed_decision_logits(
         self,
