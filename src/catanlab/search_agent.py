@@ -88,6 +88,7 @@ class OneStepLookaheadAgent(
         search_road_building: bool = True,
         search_monopoly: bool = False,
         search_robber_decisions: bool = False,
+        search_discard_decisions: bool = False,
     ):
         super().__init__(strategy)
 
@@ -114,6 +115,9 @@ class OneStepLookaheadAgent(
         )
         self.search_robber_decisions = (
             search_robber_decisions
+        )
+        self.search_discard_decisions = (
+            search_discard_decisions
         )
 
         self._evaluation_cache = {}
@@ -565,6 +569,269 @@ class OneStepLookaheadAgent(
             candidates=tuple(candidates),
             principal_variation=best.line,
         )
+
+    def choose_discards_with_context(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+    ):
+        """
+        Search over legal discard multisets and retain
+        the remaining hand with the greatest strategic
+        build readiness.
+
+        Only the acting player's private resource hand
+        is inspected. Opponent resource identities are
+        irrelevant to this decision.
+        """
+        if not self.search_discard_decisions:
+            return super().choose_discards_with_context(
+                board,
+                players,
+                inventories,
+                player,
+                inventory,
+                count,
+            )
+
+        if count <= 0:
+            return []
+
+        from catanlab.economy import (
+            BUILD_COSTS,
+            BuildType,
+            PlayerInventory,
+        )
+        from catanlab.resources import Resource
+        from catanlab.turns import (
+            legal_road_edges,
+            legal_settlement_vertices,
+        )
+
+        resources = (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        )
+
+        if count > inventory.total():
+            raise ValueError(
+                "Cannot discard more cards than are held."
+            )
+
+        # ------------------------------------------------
+        # Which build goals are structurally reachable?
+        # ------------------------------------------------
+
+        build_available = {
+            BuildType.CITY: bool(
+                player.settlements
+            ),
+            BuildType.SETTLEMENT: bool(
+                legal_settlement_vertices(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.ROAD: bool(
+                legal_road_edges(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.DEV_CARD: True,
+        }
+
+        weights = {
+            BuildType.CITY: 2.0,
+            BuildType.SETTLEMENT: 1.8,
+            BuildType.DEV_CARD: 1.2,
+            BuildType.ROAD: 0.8,
+        }
+
+        def remaining_inventory(discard_counts):
+            remaining = PlayerInventory()
+
+            for resource, discarded_count in zip(
+                resources,
+                discard_counts,
+            ):
+                kept = (
+                    inventory.count(resource)
+                    - discarded_count
+                )
+
+                if kept:
+                    remaining.add(
+                        resource,
+                        kept,
+                    )
+
+            return remaining
+
+        def score_remaining(remaining):
+            """
+            Mirror the resource-readiness component of
+            the ordinary search evaluator while adding
+            a bonus for already-affordable builds.
+            """
+            value = 0.0
+
+            for build_type in (
+                BuildType.CITY,
+                BuildType.SETTLEMENT,
+                BuildType.DEV_CARD,
+                BuildType.ROAD,
+            ):
+                if not build_available[
+                    build_type
+                ]:
+                    continue
+
+                cost = BUILD_COSTS[
+                    build_type
+                ]
+
+                total_required = sum(
+                    cost.values()
+                )
+
+                satisfied = sum(
+                    min(
+                        remaining.count(
+                            resource
+                        ),
+                        required,
+                    )
+                    for resource, required
+                    in cost.items()
+                )
+
+                weight = weights[
+                    build_type
+                ]
+
+                if total_required:
+                    value += (
+                        weight
+                        * satisfied
+                        / total_required
+                    )
+
+                if remaining.can_afford(
+                    build_type
+                ):
+                    value += weight
+
+            # Secondary flexibility reward:
+            # preserve diversity once immediate build
+            # readiness has been accounted for.
+            value += 0.05 * sum(
+                remaining.count(resource) > 0
+                for resource in resources
+            )
+
+            return value
+
+        candidates = []
+
+        held = tuple(
+            inventory.count(resource)
+            for resource in resources
+        )
+
+        def enumerate_counts(
+            index,
+            remaining_to_discard,
+            prefix,
+        ):
+            if index == len(resources):
+                if remaining_to_discard == 0:
+                    discard_counts = tuple(
+                        prefix
+                    )
+
+                    remaining = (
+                        remaining_inventory(
+                            discard_counts
+                        )
+                    )
+
+                    value = score_remaining(
+                        remaining
+                    )
+
+                    candidates.append(
+                        (
+                            value,
+                            discard_counts,
+                        )
+                    )
+
+                return
+
+            max_take = min(
+                held[index],
+                remaining_to_discard,
+            )
+
+            for take in range(
+                max_take + 1
+            ):
+                enumerate_counts(
+                    index + 1,
+                    remaining_to_discard
+                    - take,
+                    (
+                        *prefix,
+                        take,
+                    ),
+                )
+
+        enumerate_counts(
+            0,
+            count,
+            (),
+        )
+
+        if not candidates:
+            raise ValueError(
+                "No legal discard multiset found."
+            )
+
+        # Highest strategic value wins.
+        #
+        # On equal values, prefer the lexicographically
+        # smallest discard-count vector for completely
+        # deterministic behavior.
+        candidates.sort(
+            key=lambda item: (
+                -item[0],
+                item[1],
+            )
+        )
+
+        _, best_counts = candidates[0]
+
+        discarded = []
+
+        for resource, amount in zip(
+            resources,
+            best_counts,
+        ):
+            discarded.extend(
+                [resource] * amount
+            )
+
+        return discarded
 
     def choose_robber_tile(
         self,

@@ -283,6 +283,28 @@ class TurnAgent:
 
         return discarded
 
+    def choose_discards_with_context(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        inventory: PlayerInventory,
+        count: int,
+    ) -> list[Resource]:
+        """
+        Choose discards with access to full game context.
+
+        The default implementation delegates to the
+        historical choose_discards() interface so
+        existing agent overrides remain compatible.
+        """
+        return self.choose_discards(
+            player,
+            inventory,
+            count,
+        )
+
     def propose_player_trade(
         self,
         board,
@@ -1774,7 +1796,10 @@ def run_turn(
 
             discarded = agents[
                 pid
-            ].choose_discards(
+            ].choose_discards_with_context(
+                board,
+                players,
+                inventories,
                 players[
                     pid
                 ],

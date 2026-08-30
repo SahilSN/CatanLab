@@ -1898,3 +1898,200 @@ def test_search_robber_victim_uses_public_threat():
         )
         == 2
     )
+
+
+def test_search_discard_decisions_disabled_uses_adaptive_policy():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+    )
+
+    inventory = PlayerInventory()
+    inventory.add(
+        Resource.WOOD,
+        4,
+    )
+    inventory.add(
+        Resource.ORE,
+        4,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_discard_decisions=False,
+    )
+
+    expected = agent.choose_discards(
+        player,
+        inventory,
+        4,
+    )
+
+    actual = (
+        agent.choose_discards_with_context(
+            board,
+            [player],
+            [inventory],
+            player,
+            inventory,
+            4,
+        )
+    )
+
+    assert actual == expected
+
+
+def test_search_discard_preserves_city_ready_resources():
+    from catanlab.board import (
+        Board,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[],
+            ),
+        ],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+    )
+
+    inventory = PlayerInventory()
+
+    # Eight cards -> four must be discarded.
+    #
+    # ORE + WHEAT are the valuable city-progress
+    # resources, while WOOD + BRICK are expendable in
+    # this isolated board state.
+    inventory.add(
+        Resource.ORE,
+        2,
+    )
+    inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+    inventory.add(
+        Resource.WOOD,
+        2,
+    )
+    inventory.add(
+        Resource.BRICK,
+        2,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_discard_decisions=True,
+    )
+
+    discarded = (
+        agent.choose_discards_with_context(
+            board,
+            [player],
+            [inventory],
+            player,
+            inventory,
+            4,
+        )
+    )
+
+    assert len(discarded) == 4
+
+    assert Resource.ORE not in discarded
+    assert Resource.WHEAT not in discarded
+
+    assert discarded.count(
+        Resource.WOOD
+    ) == 2
+
+    assert discarded.count(
+        Resource.BRICK
+    ) == 2
+
+
+def test_search_discard_returns_only_cards_actually_held():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+    )
+
+    inventory = PlayerInventory()
+    inventory.add(
+        Resource.SHEEP,
+        5,
+    )
+    inventory.add(
+        Resource.WHEAT,
+        3,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_discard_decisions=True,
+    )
+
+    discarded = (
+        agent.choose_discards_with_context(
+            board,
+            [player],
+            [inventory],
+            player,
+            inventory,
+            4,
+        )
+    )
+
+    assert len(discarded) == 4
+
+    assert set(discarded) <= {
+        Resource.SHEEP,
+        Resource.WHEAT,
+    }
+
+    assert (
+        discarded.count(Resource.SHEEP)
+        <= 5
+    )
+
+    assert (
+        discarded.count(Resource.WHEAT)
+        <= 3
+    )

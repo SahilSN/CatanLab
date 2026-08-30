@@ -4101,3 +4101,81 @@ def test_road_building_uses_agent_edge_choice():
     assert (1, 2) in player.roads
 
 
+
+
+def test_contextual_discard_hook_preserves_legacy_override():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class LegacyDiscardAgent(TurnAgent):
+        def __init__(self):
+            self.discard_calls = 0
+
+        def choose_discards(
+            self,
+            player,
+            inventory,
+            count,
+        ):
+            self.discard_calls += 1
+
+            assert count == 4
+
+            return [
+                Resource.ORE,
+                Resource.ORE,
+                Resource.ORE,
+                Resource.ORE,
+            ]
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+    )
+
+    inventory = PlayerInventory()
+    inventory.add(
+        Resource.ORE,
+        8,
+    )
+
+    agent = LegacyDiscardAgent()
+
+    run_turn(
+        board,
+        [player],
+        [inventory],
+        [agent],
+        player_id=0,
+        roll=7,
+    )
+
+    assert agent.discard_calls == 1
+    assert inventory.count(
+        Resource.ORE
+    ) == 4
