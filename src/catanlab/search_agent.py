@@ -1492,6 +1492,8 @@ class OneStepLookaheadAgent(
         players,
         inventories,
         player,
+        bank=None,
+        dev_deck=None,
     ):
         """
         Choose a robber destination using only legally
@@ -1507,6 +1509,8 @@ class OneStepLookaheadAgent(
                 players,
                 inventories,
                 player,
+                bank=bank,
+                dev_deck=dev_deck,
             )
 
         from catanlab.dice import production_weight
@@ -1640,6 +1644,8 @@ class OneStepLookaheadAgent(
         players,
         inventories,
         player,
+        bank=None,
+        dev_deck=None,
     ):
         """
         Choose a robber victim using only public VP and
@@ -1651,6 +1657,8 @@ class OneStepLookaheadAgent(
                 players,
                 inventories,
                 player,
+                bank=bank,
+                dev_deck=dev_deck,
             )
 
         from catanlab.devcards import (

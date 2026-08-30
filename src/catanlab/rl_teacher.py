@@ -8,6 +8,17 @@ from catanlab.action_space import (
 from catanlab.rl_interface import (
     build_rl_decision_context,
 )
+from catanlab.observation import (
+    game_observation,
+)
+from catanlab.observation_encoder import (
+    encode_game_observation,
+)
+from catanlab.rl_special_actions import (
+    monopoly_resource_decision_input,
+    robber_tile_decision_input,
+    robber_victim_decision_input,
+)
 from catanlab.search_agent import (
     OneStepLookaheadAgent,
 )
@@ -48,6 +59,7 @@ class RecordingSearchAgent(
         search_year_of_plenty: bool = False,
         search_road_building: bool = True,
         search_monopoly: bool = False,
+        search_robber_decisions: bool = False,
     ):
         super().__init__(
             strategy,
@@ -67,11 +79,255 @@ class RecordingSearchAgent(
             search_monopoly=(
                 search_monopoly
             ),
+            search_robber_decisions=(
+                search_robber_decisions
+            ),
         )
 
         self.examples: list[
             TeacherExample
         ] = []
+
+        self.v2_examples: list[
+            "TeacherV2Example"
+        ] = []
+
+    def _v2_observation(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank,
+        dev_deck,
+    ) -> tuple[float, ...] | None:
+        """
+        Encode the same information-safe observation used
+        by the ordinary learned policy.
+
+        Compatibility/direct calls without bank or dev_deck
+        preserve teacher behavior but are not recorded.
+        """
+        if bank is None or dev_deck is None:
+            return None
+
+        observation = game_observation(
+            board,
+            players,
+            inventories,
+            player.player_id,
+            bank,
+            dev_deck,
+        )
+
+        return encode_game_observation(
+            observation
+        )
+
+    def _record_categorical_v2(
+        self,
+        *,
+        decision_kind,
+        observation,
+        player_id,
+        decision_input,
+        value,
+    ) -> None:
+        """
+        Record one categorical Search-v2 choice after
+        validating it against its legal mask.
+        """
+        if observation is None or value is None:
+            return
+
+        label = decision_input.encode(
+            value
+        )
+
+        if not decision_input.legal_mask[
+            label
+        ]:
+            raise RuntimeError(
+                "Search-v2 teacher selected a special "
+                "decision marked illegal by its mask: "
+                f"kind={decision_kind.value}, "
+                f"label={label}, "
+                f"value={value!r}"
+            )
+
+        self.v2_examples.append(
+            TeacherV2Example(
+                decision_kind=decision_kind,
+                observation=observation,
+                player_id=player_id,
+                label=label,
+                legal_mask=(
+                    decision_input.legal_mask
+                ),
+            )
+        )
+
+    def choose_dev_card_play(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        phase,
+        dev_deck=None,
+        bank=None,
+    ):
+        """
+        Preserve Search-v2 development-card behavior and
+        record a Monopoly resource when Search-v2 actually
+        commits one.
+        """
+        observation = self._v2_observation(
+            board,
+            players,
+            inventories,
+            player,
+            bank,
+            dev_deck,
+        )
+
+        decision = super().choose_dev_card_play(
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+            dev_deck=dev_deck,
+            bank=bank,
+        )
+
+        if (
+            self.search_monopoly
+            and self._pending_monopoly_resource
+            is not None
+        ):
+            decision_input = (
+                monopoly_resource_decision_input()
+            )
+
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind
+                    .MONOPOLY_RESOURCE
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=(
+                    self._pending_monopoly_resource
+                ),
+            )
+
+        return decision
+
+    def choose_robber_tile(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Record Search-v2's categorical robber destination.
+        """
+        observation = self._v2_observation(
+            board,
+            players,
+            inventories,
+            player,
+            bank,
+            dev_deck,
+        )
+
+        decision_input = (
+            robber_tile_decision_input(
+                board
+            )
+        )
+
+        tile_id = super().choose_robber_tile(
+            board,
+            players,
+            inventories,
+            player,
+            bank=bank,
+            dev_deck=dev_deck,
+        )
+
+        if self.search_robber_decisions:
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind.ROBBER_TILE
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=tile_id,
+            )
+
+        return tile_id
+
+    def choose_robber_victim(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Record Search-v2's categorical robber victim when
+        one is legally available.
+        """
+        observation = self._v2_observation(
+            board,
+            players,
+            inventories,
+            player,
+            bank,
+            dev_deck,
+        )
+
+        decision_input = (
+            robber_victim_decision_input(
+                board,
+                players,
+                inventories,
+                player,
+            )
+        )
+
+        victim_id = (
+            super().choose_robber_victim(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+        )
+
+        if self.search_robber_decisions:
+            self._record_categorical_v2(
+                decision_kind=(
+                    TeacherDecisionKind.ROBBER_VICTIM
+                ),
+                observation=observation,
+                player_id=player.player_id,
+                decision_input=decision_input,
+                value=victim_id,
+            )
+
+        return victim_id
 
     def choose_action(
         self,

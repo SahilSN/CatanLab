@@ -151,6 +151,8 @@ class TurnAgent:
         players,
         inventories,
         player,
+        bank=None,
+        dev_deck=None,
     ):
         """
         Choose the tile to receive the robber.
@@ -171,6 +173,8 @@ class TurnAgent:
         players,
         inventories,
         player,
+        bank=None,
+        dev_deck=None,
     ):
         """
         Choose which eligible adjacent opponent to rob.
@@ -1113,6 +1117,44 @@ def _choose_robber_victim(
         key=victim_score,
     )
 
+def _call_robber_choice_hook(
+    method,
+    board,
+    players,
+    inventories,
+    player,
+    *,
+    bank=None,
+    dev_deck=None,
+):
+    """
+    Call a robber decision hook while preserving
+    compatibility with older TurnAgent overrides that do
+    not yet accept the realism-v2 observation context.
+    """
+    from inspect import signature
+
+    parameters = signature(
+        method
+    ).parameters
+
+    kwargs = {}
+
+    if "bank" in parameters:
+        kwargs["bank"] = bank
+
+    if "dev_deck" in parameters:
+        kwargs["dev_deck"] = dev_deck
+
+    return method(
+        board,
+        players,
+        inventories,
+        player,
+        **kwargs,
+    )
+
+
 def _execute_dev_card_decision(
     board: Board,
     players: list[PlayerState],
@@ -1122,6 +1164,7 @@ def _execute_dev_card_decision(
     decision,
     rng: random.Random,
     bank: ResourceBank | None = None,
+    dev_deck: DevCardDeck | None = None,
 ) -> bool:
     """
     Execute one action development-card decision.
@@ -1226,11 +1269,14 @@ def _execute_dev_card_decision(
         return True
 
     if decision.card == DevCardType.KNIGHT:
-        tile_id = agent.choose_robber_tile(
+        tile_id = _call_robber_choice_hook(
+            agent.choose_robber_tile,
             board,
             players,
             inventories,
             player,
+            bank=bank,
+            dev_deck=dev_deck,
         )
 
         if tile_id is None:
@@ -1247,11 +1293,14 @@ def _execute_dev_card_decision(
         )
 
         victim_id = (
-            agent.choose_robber_victim(
+            _call_robber_choice_hook(
+                agent.choose_robber_victim,
                 board,
                 players,
                 inventories,
                 player,
+                bank=bank,
+                dev_deck=dev_deck,
             )
         )
 
@@ -1703,6 +1752,7 @@ def run_turn(
             decision,
             rng,
             bank=bank,
+            dev_deck=dev_deck,
         ):
             return False
 
@@ -1882,11 +1932,14 @@ def run_turn(
             rob_adjacent_player,
         )
 
-        robber_target = agent.choose_robber_tile(
+        robber_target = _call_robber_choice_hook(
+            agent.choose_robber_tile,
             board,
             players,
             inventories,
             player,
+            bank=bank,
+            dev_deck=dev_deck,
         )
 
         if robber_target is not None:
@@ -1896,11 +1949,14 @@ def run_turn(
             )
 
             victim_id = (
-                agent.choose_robber_victim(
+                _call_robber_choice_hook(
+                    agent.choose_robber_victim,
                     board,
                     players,
                     inventories,
                     player,
+                    bank=bank,
+                    dev_deck=dev_deck,
                 )
             )
 

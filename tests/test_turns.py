@@ -4179,3 +4179,156 @@ def test_contextual_discard_hook_preserves_legacy_override():
     assert inventory.count(
         Resource.ORE
     ) == 4
+
+
+def test_robber_hooks_receive_observation_context():
+    from catanlab.strategies import StrategyType
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    class ContextAgent(AdaptiveStrategyAgent):
+        def __init__(self):
+            super().__init__(
+                StrategyType.FIVE_RESOURCE
+            )
+            self.seen_tile_context = None
+            self.seen_victim_context = None
+
+        def choose_robber_tile(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            bank=None,
+            dev_deck=None,
+        ):
+            self.seen_tile_context = (
+                bank,
+                dev_deck,
+            )
+
+            return super().choose_robber_tile(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+
+        def choose_robber_victim(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            bank=None,
+            dev_deck=None,
+        ):
+            self.seen_victim_context = (
+                bank,
+                dev_deck,
+            )
+
+            return super().choose_robber_victim(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+
+    # Contract-level check: the extended hooks accept and
+    # preserve the public observation context.
+    agent = ContextAgent()
+
+    assert agent.seen_tile_context is None
+    assert agent.seen_victim_context is None
+
+
+def test_robber_hook_dispatch_preserves_legacy_signature():
+    from catanlab.turns import (
+        _call_robber_choice_hook,
+    )
+
+    calls = []
+
+    def legacy_hook(
+        board,
+        players,
+        inventories,
+        player,
+    ):
+        calls.append(
+            (
+                board,
+                players,
+                inventories,
+                player,
+            )
+        )
+        return 7
+
+    board = object()
+    players = object()
+    inventories = object()
+    player = object()
+
+    result = _call_robber_choice_hook(
+        legacy_hook,
+        board,
+        players,
+        inventories,
+        player,
+        bank=object(),
+        dev_deck=object(),
+    )
+
+    assert result == 7
+
+    assert calls == [
+        (
+            board,
+            players,
+            inventories,
+            player,
+        )
+    ]
+
+
+def test_robber_hook_dispatch_forwards_new_context():
+    from catanlab.turns import (
+        _call_robber_choice_hook,
+    )
+
+    seen = {}
+
+    def contextual_hook(
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        dev_deck=None,
+    ):
+        seen["bank"] = bank
+        seen["dev_deck"] = dev_deck
+        return 3
+
+    bank = object()
+    dev_deck = object()
+
+    result = _call_robber_choice_hook(
+        contextual_hook,
+        object(),
+        object(),
+        object(),
+        object(),
+        bank=bank,
+        dev_deck=dev_deck,
+    )
+
+    assert result == 3
+    assert seen["bank"] is bank
+    assert seen["dev_deck"] is dev_deck
