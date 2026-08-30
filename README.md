@@ -35,7 +35,7 @@ Run the tests with:
 
     pytest -q
 
-At the current strategy-freeze point, the full test suite contains 293 passing tests.
+At the current core-v1 freeze point, the full test suite contains 417 passing tests.
 
 ## Heuristic Strategy Baseline
 
@@ -131,20 +131,51 @@ These experiments either failed to improve performance consistently or produced 
 
 The baseline agents should be interpreted as distinct heuristic archetypes, not six equally strong optimal policies.
 
-## Research Direction
+## Agent Research Stack
 
-The current heuristic strategies provide a reproducible baseline for future decision-making systems.
+CatanLab now includes four major levels of decision-making agents:
 
-Possible future agents include:
+- heuristic `AdaptiveStrategyAgent` policies
+- depth-2 expectimax search with `OneStepLookaheadAgent`
+- behavior-cloned policies refined with DAgger
+- KL-regularized PPO policies initialized from the DAgger policy
 
-- stronger search-based agents
-- Monte Carlo Tree Search
-- reinforcement-learning agents
-- learned policy or value models
-- adaptive agents
-- opponent-aware agents
+The heuristic and search policies are treated as frozen baselines.
 
-The benchmark infrastructure provides a common evaluation framework for comparing these future agents with the fixed heuristic baseline.
+The strongest validated learned policy is:
+
+    results/rl_baselines/ppo_bckl_v1.pt
+
+It was initialized from:
+
+    results/rl_baselines/bc_dagger_v1.pt
+
+and fine-tuned using:
+
+    reward:              terminal win
+    BC KL coefficient:   1.0
+    learning rate:       1e-4
+    PPO epochs:          2
+    games/update:        32
+    gamma:               0.99
+    GAE lambda:          0.95
+    selected checkpoint: update 15
+
+In a fresh 4,000-game paired validation against BC + DAgger,
+KL-PPO improved:
+
+- win rate from 22.55% to 23.95%
+- mean VP from 7.1327 to 7.2107
+
+The paired win-rate improvement was +1.40 percentage points
+with a 95% confidence interval of [+0.10, +2.75] percentage
+points.
+
+The paired mean-VP improvement was +0.0780 with a 95%
+confidence interval of [+0.0215, +0.1340].
+
+See [`docs/rl_baselines.md`](docs/rl_baselines.md) for the
+learned-agent development and validation record.
 
 <!-- SEARCH-BASELINE:START -->
 ## Search-agent baseline
@@ -184,3 +215,61 @@ information-safety constraints, optimization results, corrected maritime
 results, development-card ablations, confidence intervals, and seat-level
 analysis.
 <!-- SEARCH-BASELINE:END -->
+
+## Canonical Agent Benchmark
+
+The major agent families were evaluated under a single
+standardized 400-game protocol. Each agent received the same
+game seeds, target-seat rotation, `FIVE_RESOURCE` target
+strategy, and opponent lineup of `HYBRID_OWS`, `FULL_OWS`,
+and `PORT`.
+
+| Agent | Win Rate | Mean VP | Mean Turns | Seconds/Game |
+| --- | ---: | ---: | ---: | ---: |
+| Adaptive | 26.00% | 7.0050 | 118.58 | 1.7199 |
+| Depth-2 search | 46.25% | 8.3375 | 105.30 | 2.0565 |
+| BC + DAgger | 21.00% | 7.1600 | 113.56 | 1.6307 |
+| KL-PPO | 22.25% | 7.1225 | 113.27 | 1.6323 |
+
+Depth-2 search was decisively strongest.
+
+Against KL-PPO, search achieved:
+
+    win-rate difference: +24.00 percentage points
+    95% CI:              [+18.50, +29.50]
+
+    mean-VP difference:  +1.2150
+    95% CI:              [+0.9775, +1.4525]
+
+The 400-game canonical benchmark is intended to compare all
+agent families under one common protocol. The smaller
+KL-PPO-versus-BC improvement is supported by the separate
+4,000-game paired validation described above.
+
+Run the canonical benchmark with:
+
+    python scripts/canonical_agent_benchmark.py         --games 400         --seed-offset 3600000         --output-csv results/rl_benchmarks/canonical_agents_400.csv
+
+## Core v1 Scope
+
+CatanLab Core v1 is treated as a stable research baseline.
+
+It currently includes:
+
+- a tested four-player Catan rules engine
+- deterministic seeded simulation
+- hidden-information-safe observations
+- heuristic strategy agents
+- depth-2 expectimax search
+- a fixed neural observation encoder and legal-action space
+- behavior cloning and DAgger
+- PPO with GAE and BC-policy KL regularization
+- paired bootstrap evaluation
+- seat-controlled canonical benchmarking
+
+Future work is intentionally separated from the Core v1
+baseline. Planned directions include richer learned handling
+of trading and special decisions, improved simulator realism,
+and external validation against independent Catan
+environments or bot populations.
+
