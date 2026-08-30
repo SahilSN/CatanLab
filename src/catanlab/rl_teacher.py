@@ -350,3 +350,67 @@ class DAggerAgent(
         )
 
         return learner_action
+
+
+# ---------------------------------------------------------------------------
+# Realism-v2 teacher data
+# ---------------------------------------------------------------------------
+
+from enum import Enum
+
+
+class TeacherDecisionKind(str, Enum):
+    """
+    Phase-specific decision types supervised by a
+    realism-v2 teacher.
+
+    ORDINARY_ACTION preserves the existing flat RL action
+    space. The remaining kinds deliberately use their own
+    small decision spaces rather than expanding that flat
+    vocabulary.
+    """
+
+    ORDINARY_ACTION = "ordinary_action"
+
+    ROBBER_TILE = "robber_tile"
+    ROBBER_VICTIM = "robber_victim"
+
+    DISCARD = "discard"
+
+    MONOPOLY_RESOURCE = "monopoly_resource"
+    YEAR_OF_PLENTY = "year_of_plenty"
+    ROAD_BUILDING = "road_building"
+
+    TRADE_PROPOSAL = "trade_proposal"
+    TRADE_RESPONSE = "trade_response"
+    TRADE_COUNTER = "trade_counter"
+
+
+@dataclass(frozen=True)
+class TeacherV2Example:
+    """
+    One phase-specific Search-v2 supervision example.
+
+    `observation` remains the information-safe encoded
+    game observation.
+
+    `legal_mask` is optional because not every structured
+    decision maps naturally to a single fixed categorical
+    vocabulary.
+
+    `label` contains the canonical teacher choice for the
+    decision kind. Its interpretation is defined by the
+    corresponding phase-specific codec.
+    """
+
+    decision_kind: TeacherDecisionKind
+    observation: tuple[float, ...]
+    player_id: int
+
+    label: object
+
+    legal_mask: tuple[bool, ...] | None = None
+
+    @property
+    def has_legal_mask(self) -> bool:
+        return self.legal_mask is not None

@@ -261,3 +261,81 @@ def test_dagger_returned_action_is_learner_action():
             0
         ].learner_action_id
     )
+
+
+def test_teacher_v2_example_supports_flat_masked_decision():
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+        TeacherV2Example,
+    )
+
+    example = TeacherV2Example(
+        decision_kind=(
+            TeacherDecisionKind.ORDINARY_ACTION
+        ),
+        observation=(1.0, 2.0),
+        player_id=0,
+        label=17,
+        legal_mask=(
+            True,
+            False,
+            True,
+        ),
+    )
+
+    assert (
+        example.decision_kind
+        == TeacherDecisionKind.ORDINARY_ACTION
+    )
+    assert example.label == 17
+    assert example.has_legal_mask
+
+
+def test_teacher_v2_example_supports_structured_decision():
+    from catanlab.resources import Resource
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+        TeacherV2Example,
+    )
+
+    example = TeacherV2Example(
+        decision_kind=(
+            TeacherDecisionKind.YEAR_OF_PLENTY
+        ),
+        observation=(0.0,),
+        player_id=2,
+        label=(
+            Resource.ORE,
+            Resource.WHEAT,
+        ),
+    )
+
+    assert example.label == (
+        Resource.ORE,
+        Resource.WHEAT,
+    )
+    assert example.legal_mask is None
+    assert not example.has_legal_mask
+
+
+def test_teacher_v2_decision_kinds_are_distinct():
+    from catanlab.rl_teacher import (
+        TeacherDecisionKind,
+    )
+
+    values = [
+        kind.value
+        for kind in TeacherDecisionKind
+    ]
+
+    assert len(values) == len(set(values))
+
+    assert (
+        TeacherDecisionKind.ROBBER_TILE
+        != TeacherDecisionKind.ROBBER_VICTIM
+    )
+
+    assert (
+        TeacherDecisionKind.TRADE_PROPOSAL
+        != TeacherDecisionKind.TRADE_RESPONSE
+    )
