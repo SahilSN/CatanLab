@@ -89,6 +89,7 @@ class OneStepLookaheadAgent(
         search_monopoly: bool = False,
         search_robber_decisions: bool = False,
         search_discard_decisions: bool = False,
+        search_domestic_trades: bool = False,
     ):
         super().__init__(strategy)
 
@@ -118,6 +119,9 @@ class OneStepLookaheadAgent(
         )
         self.search_discard_decisions = (
             search_discard_decisions
+        )
+        self.search_domestic_trades = (
+            search_domestic_trades
         )
 
         self._evaluation_cache = {}
@@ -577,6 +581,293 @@ class OneStepLookaheadAgent(
             candidates=tuple(candidates),
             principal_variation=best.line,
         )
+
+    def propose_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        excluded_recipients=None,
+        agents=None,
+    ):
+        """
+        Search-v2 domestic-trade proposal policy.
+
+        Enumerate compact 1-for-1 offers and select an
+        exchange that materially improves the acting
+        player's own build readiness.
+
+        Recipient hidden resource identities are never
+        inspected. A recipient may therefore be asked for
+        a card they do not hold; normal trade validation
+        and negotiation handle that case.
+        """
+        if not self.search_domestic_trades:
+            return super().propose_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                excluded_recipients=(
+                    excluded_recipients
+                ),
+                agents=agents,
+            )
+
+        from catanlab.economy import (
+            BUILD_COSTS,
+            BuildType,
+            PlayerInventory,
+        )
+        from catanlab.resources import Resource
+        from catanlab.trading import (
+            TradeOffer,
+            validate_trade_terms,
+        )
+        from catanlab.turns import (
+            legal_road_edges,
+            legal_settlement_vertices,
+        )
+
+        if excluded_recipients is None:
+            excluded_recipients = set()
+        else:
+            excluded_recipients = set(
+                excluded_recipients
+            )
+
+        inventory = inventories[
+            player.player_id
+        ]
+
+        resources = (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        )
+
+        recipients = [
+            other.player_id
+            for other in players
+            if (
+                other.player_id
+                != player.player_id
+                and other.player_id
+                not in excluded_recipients
+            )
+        ]
+
+        if not recipients:
+            return None
+
+        build_available = {
+            BuildType.CITY: bool(
+                player.settlements
+            ),
+            BuildType.SETTLEMENT: bool(
+                legal_settlement_vertices(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.ROAD: bool(
+                legal_road_edges(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.DEV_CARD: True,
+        }
+
+        build_weights = {
+            BuildType.CITY: 2.0,
+            BuildType.SETTLEMENT: 1.8,
+            BuildType.DEV_CARD: 1.2,
+            BuildType.ROAD: 0.8,
+        }
+
+        def copy_inventory(source):
+            result = PlayerInventory()
+
+            for resource in resources:
+                amount = source.count(
+                    resource
+                )
+
+                if amount:
+                    result.add(
+                        resource,
+                        amount,
+                    )
+
+            return result
+
+        def hand_value(candidate_inventory):
+            value = 0.0
+
+            for build_type in (
+                BuildType.CITY,
+                BuildType.SETTLEMENT,
+                BuildType.DEV_CARD,
+                BuildType.ROAD,
+            ):
+                if not build_available[
+                    build_type
+                ]:
+                    continue
+
+                cost = BUILD_COSTS[
+                    build_type
+                ]
+
+                total_required = sum(
+                    cost.values()
+                )
+
+                satisfied = sum(
+                    min(
+                        candidate_inventory.count(
+                            resource
+                        ),
+                        required,
+                    )
+                    for resource, required
+                    in cost.items()
+                )
+
+                weight = build_weights[
+                    build_type
+                ]
+
+                if total_required:
+                    value += (
+                        weight
+                        * satisfied
+                        / total_required
+                    )
+
+                if candidate_inventory.can_afford(
+                    build_type
+                ):
+                    value += weight
+
+            # Small flexibility reward after build value.
+            value += 0.05 * sum(
+                candidate_inventory.count(resource)
+                > 0
+                for resource in resources
+            )
+
+            return value
+
+        before_value = hand_value(
+            inventory
+        )
+
+        candidates = []
+
+        for give_resource in resources:
+            if inventory.count(
+                give_resource
+            ) <= 0:
+                continue
+
+            for receive_resource in resources:
+                if receive_resource == give_resource:
+                    continue
+
+                simulated = copy_inventory(
+                    inventory
+                )
+
+                simulated.remove(
+                    give_resource,
+                    1,
+                )
+
+                simulated.add(
+                    receive_resource,
+                    1,
+                )
+
+                after_value = hand_value(
+                    simulated
+                )
+
+                gain = (
+                    after_value
+                    - before_value
+                )
+
+                # Do not negotiate for a merely equivalent
+                # hand. Search must identify a real benefit.
+                if gain <= 1e-9:
+                    continue
+
+                for recipient_id in recipients:
+                    offer = TradeOffer(
+                        proposer_id=(
+                            player.player_id
+                        ),
+                        recipient_id=recipient_id,
+                        give=(
+                            (
+                                give_resource,
+                                1,
+                            ),
+                        ),
+                        receive=(
+                            (
+                                receive_resource,
+                                1,
+                            ),
+                        ),
+                    )
+
+                    if not validate_trade_terms(
+                        offer
+                    ):
+                        continue
+
+                    # Recipient VP is public. Prefer trading
+                    # with the less threatening opponent when
+                    # otherwise indifferent.
+                    recipient_threat = (
+                        players[
+                            recipient_id
+                        ].public_victory_points
+                    )
+
+                    candidates.append(
+                        (
+                            gain,
+                            -recipient_threat,
+                            -recipient_id,
+                            give_resource.value,
+                            receive_resource.value,
+                            offer,
+                        )
+                    )
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda item: (
+                -item[0],
+                -item[1],
+                -item[2],
+                item[3],
+                item[4],
+            )
+        )
+
+        return candidates[0][-1]
 
     def choose_discards_with_context(
         self,
