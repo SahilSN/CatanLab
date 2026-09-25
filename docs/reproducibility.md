@@ -13,7 +13,9 @@ Base revision before archival changes:
 
     9142c54dd1a49772a5a1413dd7c96e9ea78a1525
 
-The final archival commit should be recorded here after it is created.
+Final archival commit:
+
+    13b28bb2056059aee107dee84f0fd01b14d5b05a
 
 ## Validated Environment
 
