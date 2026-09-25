@@ -526,3 +526,338 @@ def test_realism_v2_dynamic_head_rejects_mismatched_batch_shape():
             TeacherDecisionKind.DISCARD,
             candidates,
         )
+
+
+def test_realism_v2_robber_tile_uses_categorical_embedding():
+    model = RealismV2ActorCritic(
+        hidden_dim=32,
+    )
+
+    observation = torch.randn(
+        1,
+        1138,
+    )
+
+    candidates = torch.tensor(
+        [
+            [
+                0.0 / 19.0,
+            ],
+            [
+                1.0 / 19.0,
+            ],
+            [
+                18.0 / 19.0,
+            ],
+        ],
+        dtype=torch.float32,
+    )
+
+    logits = model.dynamic_decision_logits(
+        observation,
+        TeacherDecisionKind.ROBBER_TILE,
+        candidates,
+    )
+
+    assert logits.shape == (
+        1,
+        3,
+    )
+
+    loss = (
+        logits[0, 0]
+        - logits[0, 1]
+    )
+
+    loss.backward()
+
+    grad = (
+        model.robber_tile_embedding
+        .weight.grad
+    )
+
+    assert grad is not None
+
+    assert torch.any(
+        grad != 0
+    )
+
+
+def test_realism_v2_robber_tile_embedding_supports_batched_candidates():
+    model = RealismV2ActorCritic(
+        hidden_dim=32,
+    )
+
+    observation = torch.randn(
+        2,
+        1138,
+    )
+
+    candidates = torch.tensor(
+        [
+            [
+                [0.0 / 19.0],
+                [1.0 / 19.0],
+                [2.0 / 19.0],
+            ],
+            [
+                [3.0 / 19.0],
+                [4.0 / 19.0],
+                [5.0 / 19.0],
+            ],
+        ],
+        dtype=torch.float32,
+    )
+
+    logits = model.dynamic_decision_logits(
+        observation,
+        TeacherDecisionKind.ROBBER_TILE,
+        candidates,
+    )
+
+    assert logits.shape == (
+        2,
+        3,
+    )
+
+
+def test_realism_v2_robber_tile_rejects_noncanonical_scalar():
+    model = RealismV2ActorCritic(
+        hidden_dim=32,
+    )
+
+    observation = torch.zeros(
+        1,
+        1138,
+    )
+
+    candidates = torch.tensor(
+        [
+            [0.12345],
+        ],
+        dtype=torch.float32,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "does not encode an exact"
+        ),
+    ):
+        model.dynamic_decision_logits(
+            observation,
+            TeacherDecisionKind.ROBBER_TILE,
+            candidates,
+        )
+
+
+def test_realism_v2_robber_tile_rejects_out_of_range_id():
+    model = RealismV2ActorCritic(
+        hidden_dim=32,
+    )
+
+    observation = torch.zeros(
+        1,
+        1138,
+    )
+
+    candidates = torch.tensor(
+        [
+            [19.0 / 19.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="outside",
+    ):
+        model.dynamic_decision_logits(
+            observation,
+            TeacherDecisionKind.ROBBER_TILE,
+            candidates,
+        )
+
+
+def test_realism_v2_road_building_uses_vertex_embeddings():
+    model = RealismV2ActorCritic(
+        hidden_dim=32,
+    )
+
+    observation = torch.randn(
+        1,
+        1138,
+    )
+
+    candidates = torch.tensor(
+        [
+            [
+                1.0 / 54.0,
+                2.0 / 54.0,
+                0.0,
+                0.0,
+                0.0,
+            ],
+            [
+                3.0 / 54.0,
+                4.0 / 54.0,
+                5.0 / 54.0,
+                6.0 / 54.0,
+                1.0,
+            ],
+        ],
+        dtype=torch.float32,
+    )
+
+    logits = model.dynamic_decision_logits(
+        observation,
+        TeacherDecisionKind.ROAD_BUILDING,
+        candidates,
+    )
+
+    assert logits.shape == (
+        1,
+        2,
+    )
+
+    loss = (
+        logits[0, 0]
+        - logits[0, 1]
+    )
+
+    loss.backward()
+
+    grad = (
+        model
+        .road_building_vertex_embedding
+        .weight.grad
+    )
+
+    assert grad is not None
+    assert torch.any(
+        grad != 0
+    )
+
+
+def test_realism_v2_road_edge_embedding_is_endpoint_order_invariant():
+    model = RealismV2ActorCritic(
+        hidden_dim=32,
+    )
+
+    model.eval()
+
+    observation = torch.randn(
+        1,
+        1138,
+    )
+
+    candidates = torch.tensor(
+        [
+            [
+                7.0 / 54.0,
+                11.0 / 54.0,
+                0.0,
+                0.0,
+                0.0,
+            ],
+            [
+                11.0 / 54.0,
+                7.0 / 54.0,
+                0.0,
+                0.0,
+                0.0,
+            ],
+        ],
+        dtype=torch.float32,
+    )
+
+    logits = model.dynamic_decision_logits(
+        observation,
+        TeacherDecisionKind.ROAD_BUILDING,
+        candidates,
+    )
+
+    assert torch.allclose(
+        logits[0, 0],
+        logits[0, 1],
+    )
+
+
+def test_realism_v2_single_road_masks_second_edge_padding():
+    model = RealismV2ActorCritic(
+        hidden_dim=32,
+    )
+
+    model.eval()
+
+    observation = torch.randn(
+        1,
+        1138,
+    )
+
+    # Both represent the same single road. The second
+    # vertex pair is semantically ignored when has_second=0.
+    candidates = torch.tensor(
+        [
+            [
+                1.0 / 54.0,
+                2.0 / 54.0,
+                0.0 / 54.0,
+                0.0 / 54.0,
+                0.0,
+            ],
+            [
+                1.0 / 54.0,
+                2.0 / 54.0,
+                20.0 / 54.0,
+                30.0 / 54.0,
+                0.0,
+            ],
+        ],
+        dtype=torch.float32,
+    )
+
+    logits = model.dynamic_decision_logits(
+        observation,
+        TeacherDecisionKind.ROAD_BUILDING,
+        candidates,
+    )
+
+    assert torch.allclose(
+        logits[0, 0],
+        logits[0, 1],
+    )
+
+
+def test_realism_v2_road_building_rejects_noncanonical_vertex():
+    model = RealismV2ActorCritic(
+        hidden_dim=32,
+    )
+
+    observation = torch.zeros(
+        1,
+        1138,
+    )
+
+    candidates = torch.tensor(
+        [
+            [
+                0.12345,
+                2.0 / 54.0,
+                0.0,
+                0.0,
+                0.0,
+            ],
+        ],
+        dtype=torch.float32,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="exact vertex_id/54",
+    ):
+        model.dynamic_decision_logits(
+            observation,
+            TeacherDecisionKind.ROAD_BUILDING,
+            candidates,
+        )

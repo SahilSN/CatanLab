@@ -7,10 +7,15 @@ name = "catanlab"
 version = "0.1.0"
 description = "Simulation and strategy analysis toolkit for Catan."
 requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.2",
+    "pandas>=2.3",
+    "torch>=2.11",
+]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8",
+    "pytest>=9",
 ]
 
 [tool.setuptools.packages.find]

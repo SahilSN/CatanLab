@@ -323,12 +323,14 @@ def append_teacher_v2_jsonl(
     return count
 
 
-def load_teacher_v2_jsonl(
+def iter_teacher_v2_jsonl(
     path,
-) -> list[TeacherV2Example]:
+):
+    """
+    Stream validated teacher-v2 examples from JSONL
+    without retaining the complete corpus in memory.
+    """
     path = Path(path)
-
-    examples = []
 
     with path.open(
         "r",
@@ -363,8 +365,20 @@ def load_teacher_v2_jsonl(
                     f"line {line_number}: {exc}"
                 ) from exc
 
-            examples.append(
-                example
-            )
+            yield example
 
-    return examples
+
+def load_teacher_v2_jsonl(
+    path,
+) -> list[TeacherV2Example]:
+    """
+    Compatibility helper for small datasets/tests.
+
+    Large training corpora should use
+    iter_teacher_v2_jsonl() instead.
+    """
+    return list(
+        iter_teacher_v2_jsonl(
+            path
+        )
+    )

@@ -431,6 +431,40 @@ class RealismV2ActorCritic(
             )
         )
 
+        # The frozen realism-v2-v1 corpus represents a
+        # robber-tile candidate as tile_id / 19. Tile IDs
+        # are categorical rather than ordinal, so decode
+        # that scalar back to its stable ID and learn an
+        # independent embedding for each of the 19 board
+        # tiles.
+        self.robber_tile_embedding = nn.Embedding(
+            19,
+            hidden_dim,
+        )
+
+        # Road Building candidates in the frozen corpus use
+        # scaled categorical vertex IDs:
+        #
+        #     vertex_id / 54
+        #
+        # Vertex identities are categorical, and road edges
+        # are undirected. Embed vertices categorically and
+        # combine each edge by summing its endpoint
+        # embeddings.
+        self.road_building_vertex_embedding = (
+            nn.Embedding(
+                54,
+                hidden_dim,
+            )
+        )
+
+        self.road_building_candidate_projector = (
+            nn.Linear(
+                hidden_dim * 2 + 1,
+                hidden_dim,
+            )
+        )
+
         self.dynamic_candidate_scorers = (
             nn.ModuleDict(
                 {
@@ -604,13 +638,243 @@ class RealismV2ActorCritic(
 
         key = decision_kind.value
 
-        candidate_embeddings = (
-            self.dynamic_candidate_projectors[
-                key
-            ](
-                candidate_features
-            )
+        from catanlab.rl_teacher import (
+            TeacherDecisionKind,
         )
+
+        if (
+            decision_kind
+            == TeacherDecisionKind.ROBBER_TILE
+        ):
+            # realism-v2-v1 stores robber candidate IDs as
+            #
+            #     tile_id / 19
+            #
+            # Recover the categorical ID exactly rather
+            # than treating that scalar as an ordinal
+            # geometric feature.
+            scaled_ids = (
+                candidate_features[..., 0]
+                * 19.0
+            )
+
+            tile_ids = (
+                torch.round(
+                    scaled_ids
+                )
+                .to(
+                    dtype=torch.long
+                )
+            )
+
+            if (
+                torch.any(
+                    tile_ids < 0
+                )
+                or torch.any(
+                    tile_ids >= 19
+                )
+            ):
+                raise ValueError(
+                    "Robber tile candidate ID is "
+                    "outside [0, 18]."
+                )
+
+            reconstructed = (
+                tile_ids.to(
+                    dtype=(
+                        candidate_features.dtype
+                    )
+                )
+                / 19.0
+            )
+
+            if not torch.allclose(
+                reconstructed,
+                candidate_features[
+                    ...,
+                    0,
+                ],
+                atol=1e-6,
+                rtol=0.0,
+            ):
+                raise ValueError(
+                    "Robber tile candidate feature "
+                    "does not encode an exact tile_id/19 "
+                    "value."
+                )
+
+            candidate_embeddings = (
+                self.robber_tile_embedding(
+                    tile_ids
+                )
+            )
+
+        elif (
+            decision_kind
+            == TeacherDecisionKind.ROAD_BUILDING
+        ):
+            # Frozen realism-v2-v1 representation:
+            #
+            # [v1 / 54,
+            #  v2 / 54,
+            #  v3 / 54,
+            #  v4 / 54,
+            #  has_second]
+            #
+            # Decode categorical vertex identities before
+            # constructing order-invariant edge embeddings.
+            scaled_vertices = (
+                candidate_features[
+                    ...,
+                    :4,
+                ]
+                * 54.0
+            )
+
+            vertex_ids = (
+                torch.round(
+                    scaled_vertices
+                )
+                .to(
+                    dtype=torch.long
+                )
+            )
+
+            if (
+                torch.any(
+                    vertex_ids < 0
+                )
+                or torch.any(
+                    vertex_ids >= 54
+                )
+            ):
+                raise ValueError(
+                    "Road Building vertex ID is "
+                    "outside [0, 53]."
+                )
+
+            reconstructed = (
+                vertex_ids.to(
+                    dtype=(
+                        candidate_features.dtype
+                    )
+                )
+                / 54.0
+            )
+
+            if not torch.allclose(
+                reconstructed,
+                candidate_features[
+                    ...,
+                    :4,
+                ],
+                atol=1e-6,
+                rtol=0.0,
+            ):
+                raise ValueError(
+                    "Road Building candidate feature "
+                    "does not encode exact vertex_id/54 "
+                    "values."
+                )
+
+            has_second = (
+                candidate_features[
+                    ...,
+                    4,
+                ]
+            )
+
+            rounded_has_second = (
+                torch.round(
+                    has_second
+                )
+            )
+
+            if (
+                not torch.allclose(
+                    has_second,
+                    rounded_has_second,
+                    atol=1e-6,
+                    rtol=0.0,
+                )
+                or torch.any(
+                    rounded_has_second < 0
+                )
+                or torch.any(
+                    rounded_has_second > 1
+                )
+            ):
+                raise ValueError(
+                    "Road Building has_second must "
+                    "be exactly 0 or 1."
+                )
+
+            vertex_embeddings = (
+                self.road_building_vertex_embedding(
+                    vertex_ids
+                )
+            )
+
+            first_edge = (
+                vertex_embeddings[
+                    ...,
+                    0,
+                    :,
+                ]
+                + vertex_embeddings[
+                    ...,
+                    1,
+                    :,
+                ]
+            )
+
+            second_edge = (
+                vertex_embeddings[
+                    ...,
+                    2,
+                    :,
+                ]
+                + vertex_embeddings[
+                    ...,
+                    3,
+                    :,
+                ]
+            )
+
+            second_edge = (
+                second_edge
+                * has_second.unsqueeze(
+                    -1
+                )
+            )
+
+            road_features = torch.cat(
+                (
+                    first_edge,
+                    second_edge,
+                    has_second.unsqueeze(
+                        -1
+                    ),
+                ),
+                dim=-1,
+            )
+
+            candidate_embeddings = (
+                self
+                .road_building_candidate_projector(
+                    road_features
+                )
+            )
+
+        else:
+            candidate_embeddings = (
+                self.dynamic_candidate_projectors[
+                    key
+                ](
+                    candidate_features
+                )
+            )
 
         # Unbatched candidate matrix:
         #
