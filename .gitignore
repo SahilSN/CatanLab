@@ -9,3 +9,19 @@ __pycache__/
 /results/rl_baselines/
 /results/rl_ppo/
 /results/rl_teacher/
+/results/rl_benchmarks/
+
+# Realism-v2 generated datasets
+/data/
+
+# Realism-v2 generated checkpoints, logs, and evaluations
+/results/realism_v2_bc/
+/results/realism_v2_dagger/
+/results/realism_v2_game_benchmark/
+/results/realism_v2_interventions/
+/results/realism_v2_ordinary_backbone/
+/results/realism_v2_ordinary_heads/
+/results/realism_v2_protected_backbone/
+
+# Python package build metadata
+*.egg-info/

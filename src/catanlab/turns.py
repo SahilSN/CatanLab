@@ -145,6 +145,111 @@ class TurnAgent:
     ) -> TurnAction:
         raise NotImplementedError
 
+    def choose_robber_tile(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Choose the tile to receive the robber.
+
+        The default implementation preserves the
+        Core-v1 strategic robber heuristic.
+        """
+        return _knight_target_tile(
+            board,
+            players,
+            inventories,
+            player,
+        )
+
+    def choose_robber_victim(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Choose which eligible adjacent opponent to rob.
+
+        The default implementation preserves the
+        Core-v1 strategic victim heuristic.
+        """
+        return _choose_robber_victim(
+            board,
+            players,
+            inventories,
+            player,
+        )
+
+    def choose_monopoly_resource(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        suggested_resource=None,
+    ):
+        """
+        Choose the resource targeted by Monopoly.
+
+        The default implementation preserves a resource
+        already selected by the Core-v1 dev-card policy.
+        """
+        return suggested_resource
+
+    def choose_year_of_plenty_resources(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        suggested_resources=None,
+    ):
+        """
+        Choose the two resources gained from Year of Plenty.
+
+        Preserve an explicitly supplied Core-v1 choice;
+        otherwise use the existing deterministic helper.
+        """
+        if suggested_resources is not None:
+            return suggested_resources
+
+        return _year_of_plenty_resources(
+            inventories[player.player_id],
+            bank=bank,
+        )
+
+    def choose_road_building_edges(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        suggested_edges=None,
+    ):
+        """
+        Choose the free roads placed by Road Building.
+
+        Preserve an explicitly supplied Core-v1 choice;
+        otherwise use the existing deterministic helper.
+        """
+        if suggested_edges is not None:
+            return suggested_edges
+
+        return _road_building_edges(
+            board,
+            players,
+            player,
+        )
 
     def choose_discards(
         self,
@@ -181,6 +286,30 @@ class TurnAgent:
                 break
 
         return discarded
+
+    def choose_discards_with_context(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        inventory: PlayerInventory,
+        count: int,
+        bank=None,
+        dev_deck=None,
+    ) -> list[Resource]:
+        """
+        Choose discards with access to full game context.
+
+        The default implementation delegates to the
+        historical choose_discards() interface so
+        existing agent overrides remain compatible.
+        """
+        return self.choose_discards(
+            player,
+            inventory,
+            count,
+        )
 
     def propose_player_trade(
         self,
@@ -990,14 +1119,131 @@ def _choose_robber_victim(
         key=victim_score,
     )
 
+def _call_robber_choice_hook(
+    method,
+    board,
+    players,
+    inventories,
+    player,
+    *,
+    bank=None,
+    dev_deck=None,
+):
+    """
+    Call a robber decision hook while preserving
+    compatibility with older TurnAgent overrides that do
+    not yet accept the realism-v2 observation context.
+    """
+    from inspect import signature
+
+    parameters = signature(
+        method
+    ).parameters
+
+    kwargs = {}
+
+    if "bank" in parameters:
+        kwargs["bank"] = bank
+
+    if "dev_deck" in parameters:
+        kwargs["dev_deck"] = dev_deck
+
+    return method(
+        board,
+        players,
+        inventories,
+        player,
+        **kwargs,
+    )
+
+
+def _call_discard_choice_hook(
+    method,
+    board,
+    players,
+    inventories,
+    player,
+    inventory,
+    count,
+    *,
+    bank=None,
+    dev_deck=None,
+):
+    """
+    Call contextual discard hooks while preserving older
+    overrides that do not yet accept bank/dev_deck.
+    """
+    from inspect import signature
+
+    parameters = signature(
+        method
+    ).parameters
+
+    kwargs = {}
+
+    if "bank" in parameters:
+        kwargs["bank"] = bank
+
+    if "dev_deck" in parameters:
+        kwargs["dev_deck"] = dev_deck
+
+    return method(
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+        **kwargs,
+    )
+
+
+def _call_trade_choice_hook(
+    method,
+    *args,
+    bank=None,
+    dev_deck=None,
+    **optional_kwargs,
+):
+    """
+    Call a domestic-trade hook while forwarding only
+    optional arguments supported by that override.
+    """
+    from inspect import signature
+
+    parameters = signature(
+        method
+    ).parameters
+
+    kwargs = {
+        name: value
+        for name, value
+        in optional_kwargs.items()
+        if name in parameters
+    }
+
+    if "bank" in parameters:
+        kwargs["bank"] = bank
+
+    if "dev_deck" in parameters:
+        kwargs["dev_deck"] = dev_deck
+
+    return method(
+        *args,
+        **kwargs,
+    )
+
+
 def _execute_dev_card_decision(
     board: Board,
     players: list[PlayerState],
     inventories: list[PlayerInventory],
     player: PlayerState,
+    agent: TurnAgent,
     decision,
     rng: random.Random,
     bank: ResourceBank | None = None,
+    dev_deck: DevCardDeck | None = None,
 ) -> bool:
     """
     Execute one action development-card decision.
@@ -1019,13 +1265,21 @@ def _execute_dev_card_decision(
         return False
 
     if decision.card == DevCardType.MONOPOLY:
-        if decision.resource is None:
+        resource = agent.choose_monopoly_resource(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_resource=decision.resource,
+        )
+
+        if resource is None:
             return False
 
         play_monopoly(
             player,
             inventories,
-            decision.resource,
+            resource,
         )
 
         return True
@@ -1034,17 +1288,18 @@ def _execute_dev_card_decision(
         decision.card
         == DevCardType.YEAR_OF_PLENTY
     ):
-        resources = decision.resources
-
-        if resources is None:
-            resources = (
-                _year_of_plenty_resources(
-                    inventories[
-                        player.player_id
-                    ],
-                    bank=bank,
-                )
+        resources = (
+            agent.choose_year_of_plenty_resources(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                suggested_resources=(
+                    decision.resources
+                ),
             )
+        )
 
         if resources is None:
             return False
@@ -1067,14 +1322,13 @@ def _execute_dev_card_decision(
         decision.card
         == DevCardType.ROAD_BUILDING
     ):
-        edges = decision.road_edges
-
-        if edges is None:
-            edges = _road_building_edges(
-                board,
-                players,
-                player,
-            )
+        edges = agent.choose_road_building_edges(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=decision.road_edges,
+        )
 
         if not edges:
             return False
@@ -1094,11 +1348,14 @@ def _execute_dev_card_decision(
         return True
 
     if decision.card == DevCardType.KNIGHT:
-        tile_id = _knight_target_tile(
+        tile_id = _call_robber_choice_hook(
+            agent.choose_robber_tile,
             board,
             players,
             inventories,
             player,
+            bank=bank,
+            dev_deck=dev_deck,
         )
 
         if tile_id is None:
@@ -1115,11 +1372,14 @@ def _execute_dev_card_decision(
         )
 
         victim_id = (
-            _choose_robber_victim(
+            _call_robber_choice_hook(
+                agent.choose_robber_victim,
                 board,
                 players,
                 inventories,
                 player,
+                bank=bank,
+                dev_deck=dev_deck,
             )
         )
 
@@ -1249,6 +1509,8 @@ def _run_trade_sequence(
     agents,
     initial_offer,
     remaining_offer_budget,
+    bank=None,
+    dev_deck=None,
 ):
     """
     Run one bounded negotiation between two players.
@@ -1302,12 +1564,15 @@ def _run_trade_sequence(
             recipient_id
         ]
 
-        if recipient_agent.evaluate_player_trade(
+        if _call_trade_choice_hook(
+            recipient_agent.evaluate_player_trade,
             board,
             players,
             recipient,
             inventories,
             offer,
+            bank=bank,
+            dev_deck=dev_deck,
         ):
             execute_player_trade(
                 offer,
@@ -1320,7 +1585,8 @@ def _run_trade_sequence(
             )
 
         counteroffer = (
-            recipient_agent.counter_player_trade(
+            _call_trade_choice_hook(
+                recipient_agent.counter_player_trade,
                 board,
                 players,
                 recipient,
@@ -1329,6 +1595,8 @@ def _run_trade_sequence(
                 attempted_offers=(
                     attempted_offers
                 ),
+                bank=bank,
+                dev_deck=dev_deck,
             )
         )
 
@@ -1363,6 +1631,8 @@ def _run_one_domestic_trade_sequence(
     player,
     agent,
     remaining_offer_budget,
+    bank=None,
+    dev_deck=None,
 ):
     """
     Give the active player one opportunity to start
@@ -1383,28 +1653,18 @@ def _run_one_domestic_trade_sequence(
             0,
         )
 
-    try:
-        initial_offer = (
-            agent.propose_player_trade(
-                board,
-                players,
-                player,
-                inventories,
-                agents=agents,
-            )
+    initial_offer = (
+        _call_trade_choice_hook(
+            agent.propose_player_trade,
+            board,
+            players,
+            player,
+            inventories,
+            agents=agents,
+            bank=bank,
+            dev_deck=dev_deck,
         )
-    except TypeError:
-        # Backward compatibility for simple custom
-        # test/baseline agents implementing the older
-        # proposal signature.
-        initial_offer = (
-            agent.propose_player_trade(
-                board,
-                players,
-                player,
-                inventories,
-            )
-        )
+    )
 
     if initial_offer is None:
         return (
@@ -1428,6 +1688,8 @@ def _run_one_domestic_trade_sequence(
         agents,
         initial_offer,
         remaining_offer_budget,
+        bank=bank,
+        dev_deck=dev_deck,
     )
 
 
@@ -1567,9 +1829,11 @@ def run_turn(
             players,
             inventories,
             player,
+            agent,
             decision,
             rng,
             bank=bank,
+            dev_deck=dev_deck,
         ):
             return False
 
@@ -1661,14 +1925,20 @@ def run_turn(
                 // 2
             )
 
-            discarded = agents[
-                pid
-            ].choose_discards(
+            discarded = _call_discard_choice_hook(
+                agents[
+                    pid
+                ].choose_discards_with_context,
+                board,
+                players,
+                inventories,
                 players[
                     pid
                 ],
                 other_inventory,
                 discard_count,
+                bank=bank,
+                dev_deck=dev_deck,
             )
 
             # Defensive validation: an agent must
@@ -1746,11 +2016,14 @@ def run_turn(
             rob_adjacent_player,
         )
 
-        robber_target = _knight_target_tile(
+        robber_target = _call_robber_choice_hook(
+            agent.choose_robber_tile,
             board,
             players,
             inventories,
             player,
+            bank=bank,
+            dev_deck=dev_deck,
         )
 
         if robber_target is not None:
@@ -1760,11 +2033,14 @@ def run_turn(
             )
 
             victim_id = (
-                _choose_robber_victim(
+                _call_robber_choice_hook(
+                    agent.choose_robber_victim,
                     board,
                     players,
                     inventories,
                     player,
+                    bank=bank,
+                    dev_deck=dev_deck,
                 )
             )
 
@@ -1880,6 +2156,8 @@ def run_turn(
                     player,
                     agent,
                     remaining_trade_budget,
+                    bank=bank,
+                    dev_deck=dev_deck,
                 )
             )
 

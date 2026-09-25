@@ -35,7 +35,7 @@ Run the tests with:
 
     pytest -q
 
-At the current core-v1 freeze point, the full test suite contains 417 passing tests.
+At the current realism-v2 archival snapshot, the full test suite contains 608 passing tests.
 
 ## Heuristic Strategy Baseline
 
@@ -131,18 +131,52 @@ These experiments either failed to improve performance consistently or produced 
 
 The baseline agents should be interpreted as distinct heuristic archetypes, not six equally strong optimal policies.
 
+## Realism-v2 Learned Agent
+
+The latest CatanLab research stage is a full post-opening
+multi-decision learned policy trained to approximate the
+depth-2 Search-v2 teacher.
+
+Realism-v2 learns ordinary actions, robber decisions,
+discarding, development-card choices, and domestic trading.
+The final successful corrective-training formulation uses
+protected-backbone DAgger: the shared representation and
+ordinary-action heads adapt on learner-reached states while
+the complete multi-family teacher corpus is replayed to
+protect the remaining decision families.
+
+The archived selected checkpoint is the protected-backbone
+R1 DAgger model. A second DAgger round did not provide a
+meaningful incremental benefit over its matched continuation
+control, so additional DAgger rounds were not pursued.
+
+Large generated datasets and checkpoints are intentionally
+excluded from Git. Exact dataset seeds, training commands,
+checkpoint hashes, and evaluation protocols are recorded in
+[`docs/reproducibility.md`](docs/reproducibility.md).
+
+See:
+
+- [`docs/realism_v2.md`](docs/realism_v2.md) for the
+  development and results record;
+- [`docs/reproducibility.md`](docs/reproducibility.md) for
+  exact reproduction details;
+- [`docs/future_work.md`](docs/future_work.md) for the
+  intentionally unfinished external-validation work.
+
 ## Agent Research Stack
 
-CatanLab now includes four major levels of decision-making agents:
+CatanLab includes several generations of decision-making agents:
 
 - heuristic `AdaptiveStrategyAgent` policies
 - depth-2 expectimax search with `OneStepLookaheadAgent`
-- behavior-cloned policies refined with DAgger
-- KL-regularized PPO policies initialized from the DAgger policy
+- earlier behavior-cloned and DAgger policies
+- earlier KL-regularized PPO policies
+- the later realism-v2 multi-decision learned policy
 
 The heuristic and search policies are treated as frozen baselines.
 
-The strongest validated learned policy is:
+In the earlier RL-baseline stage, the selected KL-PPO policy was:
 
     results/rl_baselines/ppo_bckl_v1.pt
 

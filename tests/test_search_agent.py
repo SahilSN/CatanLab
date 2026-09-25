@@ -964,12 +964,32 @@ def test_year_of_plenty_search_enables_city():
         == DevCardType.YEAR_OF_PLENTY
     )
 
-    assert (
-        dev_decision.resources
-        == (
-            Resource.ORE,
-            Resource.ORE,
+    # Search decides PLAY vs HOLD, while the
+    # specialized hook owns the selected arguments.
+    assert dev_decision.resources is None
+
+    resources = (
+        agent.choose_year_of_plenty_resources(
+            board,
+            players,
+            inventories,
+            player,
+            bank=bank,
+            suggested_resources=(
+                dev_decision.resources
+            ),
         )
+    )
+
+    assert resources == (
+        Resource.ORE,
+        Resource.ORE,
+    )
+
+    # Pending choices are single-use.
+    assert (
+        agent._pending_year_of_plenty_resources
+        is None
     )
 
     # Reconstruct the state the YOP search evaluated.
@@ -986,7 +1006,7 @@ def test_year_of_plenty_search_enables_city():
         apply_search_year_of_plenty(
             state,
             player.player_id,
-            *dev_decision.resources,
+            *resources,
         )
     )
 
@@ -1360,12 +1380,28 @@ def test_road_building_search_enables_settlement():
         == DevCardType.ROAD_BUILDING
     )
 
-    assert (
-        dev_decision.road_edges
-        == (
-            (0, 1),
-            (1, 2),
+    assert dev_decision.road_edges is None
+
+    road_edges = (
+        agent.choose_road_building_edges(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=(
+                dev_decision.road_edges
+            ),
         )
+    )
+
+    assert road_edges == (
+        (0, 1),
+        (1, 2),
+    )
+
+    assert (
+        agent._pending_road_building_edges
+        is None
     )
 
     from catanlab.search import (
@@ -1383,7 +1419,7 @@ def test_road_building_search_enables_settlement():
                 bank,
             ),
             0,
-            *dev_decision.road_edges,
+            *road_edges,
         )
     )
 
@@ -1517,7 +1553,22 @@ def test_monopoly_search_prefers_resource_that_enables_city():
         == DevCardType.MONOPOLY
     )
 
-    assert decision.resource == Resource.ORE
+    assert decision.resource is None
+
+    resource = agent.choose_monopoly_resource(
+        board,
+        players,
+        inventories,
+        player,
+        suggested_resource=decision.resource,
+    )
+
+    assert resource == Resource.ORE
+
+    assert (
+        agent._pending_monopoly_resource
+        is None
+    )
 
     from catanlab.search import (
         apply_search_monopoly_outcome,
@@ -1670,3 +1721,1058 @@ def test_monopoly_search_ignores_opponent_hidden_composition():
     )
 
     assert decision_a == decision_b
+
+
+def test_search_robber_decisions_disabled_preserves_baseline():
+    from catanlab.board import (
+        Board,
+        Tile,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.search_agent import OneStepLookaheadAgent
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=2,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    player = PlayerState(player_id=0)
+    inventories = [PlayerInventory()]
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_robber_decisions=False,
+    )
+
+    assert (
+        agent.choose_robber_tile(
+            board,
+            [player],
+            inventories,
+            player,
+        )
+        == 1
+    )
+
+
+def test_search_robber_prefers_high_threat_opponent():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.search_agent import OneStepLookaheadAgent
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=2,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+            Tile(
+                id=2,
+                coord=HexCoord(2, 0),
+                resource=Resource.WHEAT,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(1.0, 0.0),
+                adjacent_tiles=[1],
+            ),
+            Vertex(
+                id=1,
+                position=(2.0, 0.0),
+                adjacent_tiles=[2],
+            ),
+        ],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+        PlayerState(
+            player_id=2,
+            settlements=[1],
+            cities=[],
+        ),
+    ]
+
+    # Give player 2 a much larger public threat level.
+    players[2].settlements.extend(
+        [10, 11, 12, 13, 14, 15, 16]
+    )
+
+    # The extra settlement IDs above are only intended
+    # to affect public VP, but must not be dereferenced
+    # by the robber evaluator. Restore the actual board
+    # structure list and set public score through cities
+    # would require additional vertices, so instead use
+    # the simpler city target distinction below.
+    players[2].settlements = [1]
+    players[2].cities = [1]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(Resource.WOOD)
+    inventories[2].add(Resource.ORE)
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_robber_decisions=True,
+    )
+
+    assert (
+        agent.choose_robber_tile(
+            board,
+            players,
+            inventories,
+            players[0],
+        )
+        == 2
+    )
+
+
+def test_search_robber_victim_uses_public_threat():
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.search_agent import OneStepLookaheadAgent
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[0],
+            ),
+        ],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+        PlayerState(
+            player_id=2,
+            cities=[1],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(Resource.WOOD, 6)
+    inventories[2].add(Resource.ORE, 1)
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_robber_decisions=True,
+    )
+
+    assert (
+        agent.choose_robber_victim(
+            board,
+            players,
+            inventories,
+            players[0],
+        )
+        == 2
+    )
+
+
+def test_search_discard_decisions_disabled_uses_adaptive_policy():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+    )
+
+    inventory = PlayerInventory()
+    inventory.add(
+        Resource.WOOD,
+        4,
+    )
+    inventory.add(
+        Resource.ORE,
+        4,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_discard_decisions=False,
+    )
+
+    expected = agent.choose_discards(
+        player,
+        inventory,
+        4,
+    )
+
+    actual = (
+        agent.choose_discards_with_context(
+            board,
+            [player],
+            [inventory],
+            player,
+            inventory,
+            4,
+        )
+    )
+
+    assert actual == expected
+
+
+def test_search_discard_preserves_city_ready_resources():
+    from catanlab.board import (
+        Board,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[],
+            ),
+        ],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+    )
+
+    inventory = PlayerInventory()
+
+    # Eight cards -> four must be discarded.
+    #
+    # ORE + WHEAT are the valuable city-progress
+    # resources, while WOOD + BRICK are expendable in
+    # this isolated board state.
+    inventory.add(
+        Resource.ORE,
+        2,
+    )
+    inventory.add(
+        Resource.WHEAT,
+        2,
+    )
+    inventory.add(
+        Resource.WOOD,
+        2,
+    )
+    inventory.add(
+        Resource.BRICK,
+        2,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_discard_decisions=True,
+    )
+
+    discarded = (
+        agent.choose_discards_with_context(
+            board,
+            [player],
+            [inventory],
+            player,
+            inventory,
+            4,
+        )
+    )
+
+    assert len(discarded) == 4
+
+    assert Resource.ORE not in discarded
+    assert Resource.WHEAT not in discarded
+
+    assert discarded.count(
+        Resource.WOOD
+    ) == 2
+
+    assert discarded.count(
+        Resource.BRICK
+    ) == 2
+
+
+def test_search_discard_returns_only_cards_actually_held():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+    )
+
+    inventory = PlayerInventory()
+    inventory.add(
+        Resource.SHEEP,
+        5,
+    )
+    inventory.add(
+        Resource.WHEAT,
+        3,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_discard_decisions=True,
+    )
+
+    discarded = (
+        agent.choose_discards_with_context(
+            board,
+            [player],
+            [inventory],
+            player,
+            inventory,
+            4,
+        )
+    )
+
+    assert len(discarded) == 4
+
+    assert set(discarded) <= {
+        Resource.SHEEP,
+        Resource.WHEAT,
+    }
+
+    assert (
+        discarded.count(Resource.SHEEP)
+        <= 5
+    )
+
+    assert (
+        discarded.count(Resource.WHEAT)
+        <= 3
+    )
+
+
+def test_search_dev_card_pending_choice_is_single_use():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+    )
+
+    inventories = [
+        PlayerInventory(),
+    ]
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+    )
+
+    agent._pending_monopoly_resource = (
+        Resource.ORE
+    )
+
+    first = agent.choose_monopoly_resource(
+        board,
+        [player],
+        inventories,
+        player,
+        suggested_resource=Resource.WOOD,
+    )
+
+    assert first == Resource.ORE
+
+    assert (
+        agent._pending_monopoly_resource
+        is None
+    )
+
+    second = agent.choose_monopoly_resource(
+        board,
+        [player],
+        inventories,
+        player,
+        suggested_resource=Resource.WOOD,
+    )
+
+    assert second == Resource.WOOD
+
+
+def test_search_domestic_trades_disabled_preserves_adaptive_policy():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(player_id=1),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(
+        Resource.WOOD,
+        2,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=False,
+    )
+
+    expected = super(
+        OneStepLookaheadAgent,
+        agent,
+    ).propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories,
+    )
+
+    actual = agent.propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories,
+    )
+
+    assert actual == expected
+
+
+def test_search_domestic_trade_proposes_city_enabling_exchange():
+    from catanlab.board import (
+        Board,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[],
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+            settlements=[0],
+        ),
+        PlayerState(
+            player_id=1,
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    # City needs 2 wheat + 3 ore.
+    # One ore completes the city; wood is surplus here.
+    inventories[0].add(
+        Resource.WHEAT,
+        2,
+    )
+    inventories[0].add(
+        Resource.ORE,
+        2,
+    )
+    inventories[0].add(
+        Resource.WOOD,
+        1,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    offer = agent.propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories,
+    )
+
+    assert offer is not None
+    assert offer.proposer_id == 0
+    assert offer.recipient_id == 1
+
+    assert offer.give == (
+        (Resource.WOOD, 1),
+    )
+
+    assert offer.receive == (
+        (Resource.ORE, 1),
+    )
+
+
+def test_search_domestic_trade_does_not_require_hidden_recipient_card():
+    from catanlab.board import (
+        Board,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[],
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+            settlements=[0],
+        ),
+        PlayerState(
+            player_id=1,
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(
+        Resource.WHEAT,
+        2,
+    )
+    inventories[0].add(
+        Resource.ORE,
+        2,
+    )
+    inventories[0].add(
+        Resource.WOOD,
+        1,
+    )
+
+    # Recipient deliberately has no ORE. Proposal search
+    # must not peek at that hidden composition.
+    inventories[1].add(
+        Resource.SHEEP,
+        4,
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    offer = agent.propose_player_trade(
+        board,
+        players,
+        players[0],
+        inventories,
+    )
+
+    assert offer is not None
+
+    assert offer.receive == (
+        (Resource.ORE, 1),
+    )
+
+
+def test_search_domestic_trade_accepts_city_enabling_offer():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.trading import TradeOffer
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    # Recipient is one ORE short of a city and can give
+    # away surplus WOOD.
+    inventories[0].add(
+        Resource.ORE,
+        1,
+    )
+
+    inventories[1].add(
+        Resource.WHEAT,
+        2,
+    )
+    inventories[1].add(
+        Resource.ORE,
+        2,
+    )
+    inventories[1].add(
+        Resource.WOOD,
+        1,
+    )
+
+    offer = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.ORE, 1),),
+        receive=((Resource.WOOD, 1),),
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    assert agent.evaluate_player_trade(
+        board,
+        players,
+        players[1],
+        inventories,
+        offer,
+    )
+
+
+def test_search_domestic_trade_rejects_non_improving_offer():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.trading import TradeOffer
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(
+        Resource.WOOD,
+        1,
+    )
+
+    inventories[1].add(
+        Resource.WHEAT,
+        2,
+    )
+    inventories[1].add(
+        Resource.ORE,
+        2,
+    )
+    inventories[1].add(
+        Resource.WOOD,
+        1,
+    )
+
+    # Giving away ORE moves the recipient farther from
+    # the city they are preparing to build.
+    offer = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.WOOD, 1),),
+        receive=((Resource.ORE, 1),),
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    assert not agent.evaluate_player_trade(
+        board,
+        players,
+        players[1],
+        inventories,
+        offer,
+    )
+
+
+def test_search_domestic_trade_rejects_nine_vp_proposer():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.trading import TradeOffer
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+        ],
+        edges=[],
+    )
+
+    proposer = PlayerState(
+        player_id=0,
+        settlements=[
+            1,
+            2,
+            3,
+        ],
+        cities=[
+            4,
+            5,
+        ],
+        has_largest_army=True,
+    )
+
+    recipient = PlayerState(
+        player_id=1,
+        settlements=[0],
+    )
+
+    players = [
+        proposer,
+        recipient,
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[0].add(Resource.ORE, 1)
+
+    inventories[1].add(Resource.WHEAT, 2)
+    inventories[1].add(Resource.ORE, 2)
+    inventories[1].add(Resource.WOOD, 1)
+
+    offer = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.ORE, 1),),
+        receive=((Resource.WOOD, 1),),
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    assert not agent.evaluate_player_trade(
+        board,
+        players,
+        recipient,
+        inventories,
+        offer,
+    )
+
+
+def test_search_domestic_trade_counter_improves_own_hand():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.trading import TradeOffer
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(Resource.WHEAT, 2)
+    inventories[1].add(Resource.ORE, 2)
+    inventories[1].add(Resource.WOOD, 1)
+
+    # This incoming offer is unattractive.
+    incoming = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.SHEEP, 1),),
+        receive=((Resource.ORE, 1),),
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    counter = agent.counter_player_trade(
+        board,
+        players,
+        players[1],
+        inventories,
+        incoming,
+    )
+
+    assert counter is not None
+    assert counter.proposer_id == 1
+    assert counter.recipient_id == 0
+    assert counter.give == (
+        (Resource.WOOD, 1),
+    )
+    assert counter.receive == (
+        (Resource.ORE, 1),
+    )
+
+
+def test_search_domestic_counter_does_not_peek_at_opponent_hand():
+    from catanlab.board import Board, Vertex
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.search_agent import OneStepLookaheadAgent
+    from catanlab.simulation import PlayerState
+    from catanlab.strategies import StrategyType
+    from catanlab.trading import TradeOffer
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+            ),
+        ],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(player_id=0),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    # Opponent deliberately owns no ORE.
+    inventories[0].add(
+        Resource.SHEEP,
+        4,
+    )
+
+    inventories[1].add(Resource.WHEAT, 2)
+    inventories[1].add(Resource.ORE, 2)
+    inventories[1].add(Resource.WOOD, 1)
+
+    incoming = TradeOffer(
+        proposer_id=0,
+        recipient_id=1,
+        give=((Resource.SHEEP, 1),),
+        receive=((Resource.ORE, 1),),
+    )
+
+    agent = OneStepLookaheadAgent(
+        StrategyType.FIVE_RESOURCE,
+        search_domestic_trades=True,
+    )
+
+    counter = agent.counter_player_trade(
+        board,
+        players,
+        players[1],
+        inventories,
+        incoming,
+    )
+
+    assert counter is not None
+
+    # Search may request ORE despite the opponent's true
+    # hidden hand lacking it.
+    assert counter.receive == (
+        (Resource.ORE, 1),
+    )

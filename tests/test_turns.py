@@ -3460,3 +3460,1032 @@ def test_year_of_plenty_uses_explicit_resource_pair():
         DevCardType.YEAR_OF_PLENTY.value
         in player.played_dev_cards
     )
+
+
+
+def test_roll_seven_uses_agent_robber_choices():
+    import random
+
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class RobberChoiceAgent(TurnAgent):
+        def __init__(self):
+            self.tile_calls = 0
+            self.victim_calls = 0
+
+        def choose_robber_tile(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+        ):
+            self.tile_calls += 1
+            return 1
+
+        def choose_robber_victim(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+        ):
+            self.victim_calls += 1
+            return 1
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=2,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(1.0, 0.0),
+                adjacent_tiles=[1],
+            ),
+        ],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+        ),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WHEAT
+    )
+
+    agent = RobberChoiceAgent()
+
+    run_turn(
+        board,
+        players,
+        inventories,
+        [
+            agent,
+            PassAgent(),
+        ],
+        player_id=0,
+        roll=7,
+        rng=random.Random(0),
+    )
+
+    assert agent.tile_calls == 1
+    assert agent.victim_calls == 1
+
+    assert board.robber_tile_id == 1
+
+    assert inventories[0].count(
+        Resource.WHEAT
+    ) == 1
+
+    assert inventories[1].count(
+        Resource.WHEAT
+    ) == 0
+
+
+def test_knight_uses_agent_robber_choices():
+    import random
+
+    from catanlab.board import (
+        Board,
+        Tile,
+        Vertex,
+    )
+    from catanlab.devcard_policy import (
+        DevCardDecision,
+    )
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.graph import HexCoord
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class KnightRobberAgent(TurnAgent):
+        def __init__(self):
+            self.tile_calls = 0
+            self.victim_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            return DevCardDecision(
+                card=DevCardType.KNIGHT,
+                utility=10.0,
+            )
+
+        def choose_robber_tile(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+        ):
+            self.tile_calls += 1
+            return 1
+
+        def choose_robber_victim(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+        ):
+            self.victim_calls += 1
+            return 1
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[
+            Tile(
+                id=0,
+                coord=HexCoord(0, 0),
+                resource=Resource.WOOD,
+                number=2,
+            ),
+            Tile(
+                id=1,
+                coord=HexCoord(1, 0),
+                resource=Resource.ORE,
+                number=6,
+            ),
+        ],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(1.0, 0.0),
+                adjacent_tiles=[1],
+            ),
+        ],
+        edges=[],
+        robber_tile_id=0,
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+            dev_cards=[
+                DevCardType.KNIGHT.value,
+            ],
+        ),
+        PlayerState(
+            player_id=1,
+            settlements=[0],
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WHEAT
+    )
+
+    agent = KnightRobberAgent()
+
+    run_turn(
+        board,
+        players,
+        inventories,
+        [
+            agent,
+            PassAgent(),
+        ],
+        player_id=0,
+        roll=2,
+        rng=random.Random(0),
+    )
+
+    assert agent.tile_calls == 1
+    assert agent.victim_calls == 1
+
+    assert board.robber_tile_id == 1
+    assert players[0].knights_played == 1
+
+    assert inventories[0].count(
+        Resource.WHEAT
+    ) == 1
+
+    assert inventories[1].count(
+        Resource.WHEAT
+    ) == 0
+
+
+
+def test_monopoly_uses_agent_resource_choice():
+    from catanlab.board import Board
+    from catanlab.devcard_policy import DevCardDecision
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class MonopolyAgent(TurnAgent):
+        def __init__(self):
+            self.resource_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            return DevCardDecision(
+                card=DevCardType.MONOPOLY,
+                utility=10.0,
+                resource=Resource.WOOD,
+            )
+
+        def choose_monopoly_resource(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            suggested_resource=None,
+        ):
+            self.resource_calls += 1
+            assert suggested_resource == Resource.WOOD
+            return Resource.ORE
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    class PassAgent(TurnAgent):
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    players = [
+        PlayerState(
+            player_id=0,
+            dev_cards=[
+                DevCardType.MONOPOLY.value,
+            ],
+        ),
+        PlayerState(
+            player_id=1,
+        ),
+    ]
+
+    inventories = [
+        PlayerInventory(),
+        PlayerInventory(),
+    ]
+
+    inventories[1].add(
+        Resource.WOOD,
+        2,
+    )
+    inventories[1].add(
+        Resource.ORE,
+        3,
+    )
+
+    agent = MonopolyAgent()
+
+    run_turn(
+        board,
+        players,
+        inventories,
+        [
+            agent,
+            PassAgent(),
+        ],
+        player_id=0,
+        roll=2,
+    )
+
+    assert agent.resource_calls == 1
+    assert inventories[0].count(
+        Resource.ORE
+    ) == 3
+    assert inventories[0].count(
+        Resource.WOOD
+    ) == 0
+
+
+def test_year_of_plenty_uses_agent_resource_choice():
+    from catanlab.board import Board
+    from catanlab.devcard_policy import DevCardDecision
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class PlentyAgent(TurnAgent):
+        def __init__(self):
+            self.resource_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            return DevCardDecision(
+                card=DevCardType.YEAR_OF_PLENTY,
+                utility=10.0,
+            )
+
+        def choose_year_of_plenty_resources(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            bank=None,
+            suggested_resources=None,
+        ):
+            self.resource_calls += 1
+            assert suggested_resources is None
+            return (
+                Resource.ORE,
+                Resource.ORE,
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        dev_cards=[
+            DevCardType.YEAR_OF_PLENTY.value,
+        ],
+    )
+
+    inventory = PlayerInventory()
+    agent = PlentyAgent()
+
+    run_turn(
+        board,
+        [player],
+        [inventory],
+        [agent],
+        player_id=0,
+        roll=2,
+    )
+
+    assert agent.resource_calls == 1
+    assert inventory.count(
+        Resource.ORE
+    ) == 2
+
+
+def test_road_building_uses_agent_edge_choice():
+    from catanlab.board import (
+        Board,
+        Edge,
+        Vertex,
+    )
+    from catanlab.devcard_policy import DevCardDecision
+    from catanlab.devcards import DevCardType
+    from catanlab.economy import PlayerInventory
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class RoadBuildingAgent(TurnAgent):
+        def __init__(self):
+            self.edge_calls = 0
+
+        def choose_dev_card_play(
+            self,
+            board,
+            players,
+            player,
+            inventories,
+            phase,
+        ):
+            return DevCardDecision(
+                card=DevCardType.ROAD_BUILDING,
+                utility=10.0,
+            )
+
+        def choose_road_building_edges(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=None,
+        ):
+            self.edge_calls += 1
+            assert suggested_edges is None
+            return (
+                (0, 1),
+                (1, 2),
+            )
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[
+            Vertex(
+                id=0,
+                position=(0.0, 0.0),
+                adjacent_tiles=[],
+            ),
+            Vertex(
+                id=1,
+                position=(1.0, 0.0),
+                adjacent_tiles=[],
+            ),
+            Vertex(
+                id=2,
+                position=(2.0, 0.0),
+                adjacent_tiles=[],
+            ),
+        ],
+        edges=[
+            Edge(
+                vertex_a=0,
+                vertex_b=1,
+            ),
+            Edge(
+                vertex_a=1,
+                vertex_b=2,
+            ),
+        ],
+    )
+
+    player = PlayerState(
+        player_id=0,
+        settlements=[0],
+        dev_cards=[
+            DevCardType.ROAD_BUILDING.value,
+        ],
+    )
+
+    agent = RoadBuildingAgent()
+
+    run_turn(
+        board,
+        [player],
+        [PlayerInventory()],
+        [agent],
+        player_id=0,
+        roll=2,
+    )
+
+    assert agent.edge_calls == 1
+    assert (0, 1) in player.roads
+    assert (1, 2) in player.roads
+
+
+
+
+def test_contextual_discard_hook_preserves_legacy_override():
+    from catanlab.board import Board
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.simulation import PlayerState
+    from catanlab.turns import (
+        ActionType,
+        TurnAction,
+        TurnAgent,
+        run_turn,
+    )
+
+    class LegacyDiscardAgent(TurnAgent):
+        def __init__(self):
+            self.discard_calls = 0
+
+        def choose_discards(
+            self,
+            player,
+            inventory,
+            count,
+        ):
+            self.discard_calls += 1
+
+            assert count == 4
+
+            return [
+                Resource.ORE,
+                Resource.ORE,
+                Resource.ORE,
+                Resource.ORE,
+            ]
+
+        def choose_action(
+            self,
+            board,
+            players,
+            player,
+            inventory,
+            dev_deck=None,
+        ):
+            return TurnAction(
+                action_type=ActionType.PASS
+            )
+
+    board = Board(
+        tiles=[],
+        vertices=[],
+        edges=[],
+    )
+
+    player = PlayerState(
+        player_id=0,
+    )
+
+    inventory = PlayerInventory()
+    inventory.add(
+        Resource.ORE,
+        8,
+    )
+
+    agent = LegacyDiscardAgent()
+
+    run_turn(
+        board,
+        [player],
+        [inventory],
+        [agent],
+        player_id=0,
+        roll=7,
+    )
+
+    assert agent.discard_calls == 1
+    assert inventory.count(
+        Resource.ORE
+    ) == 4
+
+
+def test_robber_hooks_receive_observation_context():
+    from catanlab.strategies import StrategyType
+    from catanlab.turns import AdaptiveStrategyAgent
+
+    class ContextAgent(AdaptiveStrategyAgent):
+        def __init__(self):
+            super().__init__(
+                StrategyType.FIVE_RESOURCE
+            )
+            self.seen_tile_context = None
+            self.seen_victim_context = None
+
+        def choose_robber_tile(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            bank=None,
+            dev_deck=None,
+        ):
+            self.seen_tile_context = (
+                bank,
+                dev_deck,
+            )
+
+            return super().choose_robber_tile(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+
+        def choose_robber_victim(
+            self,
+            board,
+            players,
+            inventories,
+            player,
+            bank=None,
+            dev_deck=None,
+        ):
+            self.seen_victim_context = (
+                bank,
+                dev_deck,
+            )
+
+            return super().choose_robber_victim(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+
+    # Contract-level check: the extended hooks accept and
+    # preserve the public observation context.
+    agent = ContextAgent()
+
+    assert agent.seen_tile_context is None
+    assert agent.seen_victim_context is None
+
+
+def test_robber_hook_dispatch_preserves_legacy_signature():
+    from catanlab.turns import (
+        _call_robber_choice_hook,
+    )
+
+    calls = []
+
+    def legacy_hook(
+        board,
+        players,
+        inventories,
+        player,
+    ):
+        calls.append(
+            (
+                board,
+                players,
+                inventories,
+                player,
+            )
+        )
+        return 7
+
+    board = object()
+    players = object()
+    inventories = object()
+    player = object()
+
+    result = _call_robber_choice_hook(
+        legacy_hook,
+        board,
+        players,
+        inventories,
+        player,
+        bank=object(),
+        dev_deck=object(),
+    )
+
+    assert result == 7
+
+    assert calls == [
+        (
+            board,
+            players,
+            inventories,
+            player,
+        )
+    ]
+
+
+def test_robber_hook_dispatch_forwards_new_context():
+    from catanlab.turns import (
+        _call_robber_choice_hook,
+    )
+
+    seen = {}
+
+    def contextual_hook(
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        dev_deck=None,
+    ):
+        seen["bank"] = bank
+        seen["dev_deck"] = dev_deck
+        return 3
+
+    bank = object()
+    dev_deck = object()
+
+    result = _call_robber_choice_hook(
+        contextual_hook,
+        object(),
+        object(),
+        object(),
+        object(),
+        bank=bank,
+        dev_deck=dev_deck,
+    )
+
+    assert result == 3
+    assert seen["bank"] is bank
+    assert seen["dev_deck"] is dev_deck
+
+
+def test_discard_hook_dispatch_preserves_legacy_signature():
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.turns import (
+        _call_discard_choice_hook,
+    )
+
+    called = []
+
+    def legacy(
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+    ):
+        called.append(count)
+        return [Resource.WOOD]
+
+    inventory = PlayerInventory()
+    inventory.add(Resource.WOOD)
+
+    result = _call_discard_choice_hook(
+        legacy,
+        object(),
+        [object()],
+        [inventory],
+        object(),
+        inventory,
+        1,
+        bank=object(),
+        dev_deck=object(),
+    )
+
+    assert result == [Resource.WOOD]
+    assert called == [1]
+
+
+def test_discard_hook_dispatch_forwards_new_context():
+    from catanlab.economy import PlayerInventory
+    from catanlab.resources import Resource
+    from catanlab.turns import (
+        _call_discard_choice_hook,
+    )
+
+    seen = {}
+
+    bank = object()
+    dev_deck = object()
+
+    def contextual(
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+        bank=None,
+        dev_deck=None,
+    ):
+        seen["bank"] = bank
+        seen["dev_deck"] = dev_deck
+        return [Resource.ORE]
+
+    inventory = PlayerInventory()
+    inventory.add(Resource.ORE)
+
+    result = _call_discard_choice_hook(
+        contextual,
+        object(),
+        [object()],
+        [inventory],
+        object(),
+        inventory,
+        1,
+        bank=bank,
+        dev_deck=dev_deck,
+    )
+
+    assert result == [Resource.ORE]
+    assert seen["bank"] is bank
+    assert seen["dev_deck"] is dev_deck
+
+
+def test_trade_hook_dispatch_preserves_legacy_signature():
+    from catanlab.turns import (
+        _call_trade_choice_hook,
+    )
+
+    seen = []
+
+    def legacy(
+        board,
+        players,
+        player,
+        inventories,
+    ):
+        seen.append(True)
+        return None
+
+    result = _call_trade_choice_hook(
+        legacy,
+        object(),
+        [],
+        object(),
+        [],
+        agents=object(),
+        bank=object(),
+        dev_deck=object(),
+    )
+
+    assert result is None
+    assert seen == [True]
+
+
+def test_trade_hook_dispatch_forwards_supported_context():
+    from catanlab.turns import (
+        _call_trade_choice_hook,
+    )
+
+    bank = object()
+    deck = object()
+    agents = object()
+
+    seen = {}
+
+    def contextual(
+        board,
+        players,
+        player,
+        inventories,
+        agents=None,
+        bank=None,
+        dev_deck=None,
+    ):
+        seen["agents"] = agents
+        seen["bank"] = bank
+        seen["dev_deck"] = dev_deck
+        return None
+
+    _call_trade_choice_hook(
+        contextual,
+        object(),
+        [],
+        object(),
+        [],
+        agents=agents,
+        bank=bank,
+        dev_deck=deck,
+    )
+
+    assert seen["agents"] is agents
+    assert seen["bank"] is bank
+    assert seen["dev_deck"] is deck

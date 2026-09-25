@@ -87,6 +87,9 @@ class OneStepLookaheadAgent(
         search_year_of_plenty: bool = False,
         search_road_building: bool = True,
         search_monopoly: bool = False,
+        search_robber_decisions: bool = False,
+        search_discard_decisions: bool = False,
+        search_domestic_trades: bool = False,
     ):
         super().__init__(strategy)
 
@@ -111,12 +114,29 @@ class OneStepLookaheadAgent(
         self.search_monopoly = (
             search_monopoly
         )
+        self.search_robber_decisions = (
+            search_robber_decisions
+        )
+        self.search_discard_decisions = (
+            search_discard_decisions
+        )
+        self.search_domestic_trades = (
+            search_domestic_trades
+        )
 
         self._evaluation_cache = {}
         self._search_cache = {}
 
         self.cache_hits = 0
         self.cache_misses = 0
+
+        # Short-lived arguments selected while evaluating
+        # a development-card play. These are consumed by
+        # the specialized execution hooks immediately after
+        # choose_dev_card_play() returns.
+        self._pending_monopoly_resource = None
+        self._pending_year_of_plenty_resources = None
+        self._pending_road_building_edges = None
 
     @staticmethod
     def _state_key(
@@ -562,6 +582,1210 @@ class OneStepLookaheadAgent(
             principal_variation=best.line,
         )
 
+    @staticmethod
+    def _copy_resource_inventory(
+        inventory,
+    ):
+        """
+        Return an independent copy of a resource hand.
+        """
+        from catanlab.economy import PlayerInventory
+        from catanlab.resources import Resource
+
+        copied = PlayerInventory()
+
+        for resource in (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        ):
+            amount = inventory.count(
+                resource
+            )
+
+            if amount:
+                copied.add(
+                    resource,
+                    amount,
+                )
+
+        return copied
+
+    def _domestic_trade_hand_value(
+        self,
+        board,
+        players,
+        player,
+        inventory,
+    ) -> float:
+        """
+        Evaluate this player's resource hand for domestic
+        trade decisions.
+
+        The value mirrors the build-readiness model used
+        by Search-v2 proposal and discard decisions.
+        """
+        from catanlab.economy import (
+            BUILD_COSTS,
+            BuildType,
+        )
+        from catanlab.resources import Resource
+        from catanlab.turns import (
+            legal_road_edges,
+            legal_settlement_vertices,
+        )
+
+        build_available = {
+            BuildType.CITY: bool(
+                player.settlements
+            ),
+            BuildType.SETTLEMENT: bool(
+                legal_settlement_vertices(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.ROAD: bool(
+                legal_road_edges(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.DEV_CARD: True,
+        }
+
+        build_weights = {
+            BuildType.CITY: 2.0,
+            BuildType.SETTLEMENT: 1.8,
+            BuildType.DEV_CARD: 1.2,
+            BuildType.ROAD: 0.8,
+        }
+
+        value = 0.0
+
+        for build_type in (
+            BuildType.CITY,
+            BuildType.SETTLEMENT,
+            BuildType.DEV_CARD,
+            BuildType.ROAD,
+        ):
+            if not build_available[
+                build_type
+            ]:
+                continue
+
+            cost = BUILD_COSTS[
+                build_type
+            ]
+
+            total_required = sum(
+                cost.values()
+            )
+
+            satisfied = sum(
+                min(
+                    inventory.count(
+                        resource
+                    ),
+                    required,
+                )
+                for resource, required
+                in cost.items()
+            )
+
+            weight = build_weights[
+                build_type
+            ]
+
+            if total_required:
+                value += (
+                    weight
+                    * satisfied
+                    / total_required
+                )
+
+            if inventory.can_afford(
+                build_type
+            ):
+                value += weight
+
+        value += 0.05 * sum(
+            inventory.count(resource) > 0
+            for resource in (
+                Resource.WOOD,
+                Resource.BRICK,
+                Resource.SHEEP,
+                Resource.WHEAT,
+                Resource.ORE,
+            )
+        )
+
+        return value
+
+    def _simulate_domestic_trade_hand(
+        self,
+        inventory,
+        *,
+        outgoing,
+        incoming,
+    ):
+        """
+        Return this player's hypothetical post-trade hand.
+
+        `outgoing` is what this player gives and `incoming`
+        is what this player receives.
+        """
+        simulated = self._copy_resource_inventory(
+            inventory
+        )
+
+        for resource, amount in outgoing:
+            if (
+                simulated.count(resource)
+                < amount
+            ):
+                return None
+
+            simulated.remove(
+                resource,
+                amount,
+            )
+
+        for resource, amount in incoming:
+            simulated.add(
+                resource,
+                amount,
+            )
+
+        return simulated
+
+    def propose_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        excluded_recipients=None,
+        agents=None,
+    ):
+        """
+        Search-v2 domestic-trade proposal policy.
+
+        Enumerate compact 1-for-1 offers and select an
+        exchange that materially improves the acting
+        player's own build readiness.
+
+        Recipient hidden resource identities are never
+        inspected. A recipient may therefore be asked for
+        a card they do not hold; normal trade validation
+        and negotiation handle that case.
+        """
+        if not self.search_domestic_trades:
+            return super().propose_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                excluded_recipients=(
+                    excluded_recipients
+                ),
+                agents=agents,
+            )
+
+        from catanlab.resources import Resource
+        from catanlab.trading import (
+            TradeOffer,
+            validate_trade_terms,
+        )
+
+        if excluded_recipients is None:
+            excluded_recipients = set()
+        else:
+            excluded_recipients = set(
+                excluded_recipients
+            )
+
+        inventory = inventories[
+            player.player_id
+        ]
+
+        resources = (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        )
+
+        recipients = [
+            other.player_id
+            for other in players
+            if (
+                other.player_id
+                != player.player_id
+                and other.player_id
+                not in excluded_recipients
+            )
+        ]
+
+        if not recipients:
+            return None
+
+        before_value = (
+            self._domestic_trade_hand_value(
+                board,
+                players,
+                player,
+                inventory,
+            )
+        )
+
+        candidates = []
+
+        for give_resource in resources:
+            if inventory.count(
+                give_resource
+            ) <= 0:
+                continue
+
+            for receive_resource in resources:
+                if receive_resource == give_resource:
+                    continue
+
+                simulated = (
+                    self._simulate_domestic_trade_hand(
+                        inventory,
+                        outgoing=(
+                            (
+                                give_resource,
+                                1,
+                            ),
+                        ),
+                        incoming=(
+                            (
+                                receive_resource,
+                                1,
+                            ),
+                        ),
+                    )
+                )
+
+                if simulated is None:
+                    continue
+
+                after_value = (
+                    self._domestic_trade_hand_value(
+                        board,
+                        players,
+                        player,
+                        simulated,
+                    )
+                )
+
+                gain = (
+                    after_value
+                    - before_value
+                )
+
+                # Do not negotiate for a merely equivalent
+                # hand. Search must identify a real benefit.
+                if gain <= 1e-9:
+                    continue
+
+                for recipient_id in recipients:
+                    offer = TradeOffer(
+                        proposer_id=(
+                            player.player_id
+                        ),
+                        recipient_id=recipient_id,
+                        give=(
+                            (
+                                give_resource,
+                                1,
+                            ),
+                        ),
+                        receive=(
+                            (
+                                receive_resource,
+                                1,
+                            ),
+                        ),
+                    )
+
+                    if not validate_trade_terms(
+                        offer
+                    ):
+                        continue
+
+                    # Recipient VP is public. Prefer trading
+                    # with the less threatening opponent when
+                    # otherwise indifferent.
+                    recipient_threat = (
+                        players[
+                            recipient_id
+                        ].public_victory_points
+                    )
+
+                    candidates.append(
+                        (
+                            gain,
+                            -recipient_threat,
+                            -recipient_id,
+                            give_resource.value,
+                            receive_resource.value,
+                            offer,
+                        )
+                    )
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda item: (
+                -item[0],
+                -item[1],
+                -item[2],
+                item[3],
+                item[4],
+            )
+        )
+
+        return candidates[0][-1]
+
+    def evaluate_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        offer,
+    ) -> bool:
+        """
+        Evaluate an incoming domestic trade directly with
+        Search-v2's own hand-value model.
+        """
+        if not self.search_domestic_trades:
+            return super().evaluate_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                offer,
+            )
+
+        from catanlab.trading import (
+            validate_trade_offer,
+        )
+
+        if (
+            offer.recipient_id
+            != player.player_id
+        ):
+            return False
+
+        # The recipient is allowed to verify that the
+        # offered transaction is actually feasible because
+        # they know their own hand. The game engine also
+        # performs this validation.
+        if not validate_trade_offer(
+            offer,
+            inventories,
+        ):
+            return False
+
+        proposer = players[
+            offer.proposer_id
+        ]
+
+        # Preserve the established public-threat safeguard.
+        if proposer.public_victory_points >= 9:
+            return False
+
+        inventory = inventories[
+            player.player_id
+        ]
+
+        before_value = (
+            self._domestic_trade_hand_value(
+                board,
+                players,
+                player,
+                inventory,
+            )
+        )
+
+        # From recipient perspective:
+        #   give     = offer.receive
+        #   receive  = offer.give
+        simulated = (
+            self._simulate_domestic_trade_hand(
+                inventory,
+                outgoing=offer.receive,
+                incoming=offer.give,
+            )
+        )
+
+        if simulated is None:
+            return False
+
+        after_value = (
+            self._domestic_trade_hand_value(
+                board,
+                players,
+                player,
+                simulated,
+            )
+        )
+
+        gain = (
+            after_value
+            - before_value
+        )
+
+        # Require a real improvement rather than accepting
+        # neutral exchanges that can create excessive
+        # negotiation churn.
+        return gain > 1e-9
+
+    def counter_player_trade(
+        self,
+        board,
+        players,
+        player,
+        inventories,
+        offer,
+        attempted_offers=None,
+    ):
+        """
+        Generate the best improving 1-for-1 Search-v2
+        counteroffer.
+
+        Candidate requests do not inspect the other
+        player's hidden resource identities.
+        """
+        if not self.search_domestic_trades:
+            return super().counter_player_trade(
+                board,
+                players,
+                player,
+                inventories,
+                offer,
+                attempted_offers=(
+                    attempted_offers
+                ),
+            )
+
+        from catanlab.resources import Resource
+        from catanlab.trading import (
+            TradeOffer,
+            validate_trade_terms,
+        )
+
+        if (
+            offer.recipient_id
+            != player.player_id
+        ):
+            return None
+
+        if attempted_offers is None:
+            attempted_offers = set()
+
+        inventory = inventories[
+            player.player_id
+        ]
+
+        resources = (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        )
+
+        before_value = (
+            self._domestic_trade_hand_value(
+                board,
+                players,
+                player,
+                inventory,
+            )
+        )
+
+        candidates = []
+
+        for give_resource in resources:
+            if inventory.count(
+                give_resource
+            ) <= 0:
+                continue
+
+            for receive_resource in resources:
+                if (
+                    receive_resource
+                    == give_resource
+                ):
+                    continue
+
+                simulated = (
+                    self._simulate_domestic_trade_hand(
+                        inventory,
+                        outgoing=(
+                            (
+                                give_resource,
+                                1,
+                            ),
+                        ),
+                        incoming=(
+                            (
+                                receive_resource,
+                                1,
+                            ),
+                        ),
+                    )
+                )
+
+                if simulated is None:
+                    continue
+
+                after_value = (
+                    self._domestic_trade_hand_value(
+                        board,
+                        players,
+                        player,
+                        simulated,
+                    )
+                )
+
+                gain = (
+                    after_value
+                    - before_value
+                )
+
+                if gain <= 1e-9:
+                    continue
+
+                candidate = TradeOffer(
+                    proposer_id=(
+                        player.player_id
+                    ),
+                    recipient_id=(
+                        offer.proposer_id
+                    ),
+                    give=(
+                        (
+                            give_resource,
+                            1,
+                        ),
+                    ),
+                    receive=(
+                        (
+                            receive_resource,
+                            1,
+                        ),
+                    ),
+                )
+
+                if candidate in attempted_offers:
+                    continue
+
+                # Structural validation only. Do not use
+                # validate_trade_offer(), because doing so
+                # here would reveal whether the opponent
+                # actually owns the requested card.
+                if not validate_trade_terms(
+                    candidate
+                ):
+                    continue
+
+                candidates.append(
+                    (
+                        gain,
+                        give_resource.value,
+                        receive_resource.value,
+                        candidate,
+                    )
+                )
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda item: (
+                -item[0],
+                item[1],
+                item[2],
+            )
+        )
+
+        return candidates[0][-1]
+
+    def choose_discards_with_context(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        inventory,
+        count,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Search over legal discard multisets and retain
+        the remaining hand with the greatest strategic
+        build readiness.
+
+        Only the acting player's private resource hand
+        is inspected. Opponent resource identities are
+        irrelevant to this decision.
+        """
+        if not self.search_discard_decisions:
+            return super().choose_discards_with_context(
+                board,
+                players,
+                inventories,
+                player,
+                inventory,
+                count,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+
+        if count <= 0:
+            return []
+
+        from catanlab.economy import (
+            BUILD_COSTS,
+            BuildType,
+            PlayerInventory,
+        )
+        from catanlab.resources import Resource
+        from catanlab.turns import (
+            legal_road_edges,
+            legal_settlement_vertices,
+        )
+
+        resources = (
+            Resource.WOOD,
+            Resource.BRICK,
+            Resource.SHEEP,
+            Resource.WHEAT,
+            Resource.ORE,
+        )
+
+        if count > inventory.total():
+            raise ValueError(
+                "Cannot discard more cards than are held."
+            )
+
+        # ------------------------------------------------
+        # Which build goals are structurally reachable?
+        # ------------------------------------------------
+
+        build_available = {
+            BuildType.CITY: bool(
+                player.settlements
+            ),
+            BuildType.SETTLEMENT: bool(
+                legal_settlement_vertices(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.ROAD: bool(
+                legal_road_edges(
+                    board,
+                    players,
+                    player,
+                )
+            ),
+            BuildType.DEV_CARD: True,
+        }
+
+        weights = {
+            BuildType.CITY: 2.0,
+            BuildType.SETTLEMENT: 1.8,
+            BuildType.DEV_CARD: 1.2,
+            BuildType.ROAD: 0.8,
+        }
+
+        def remaining_inventory(discard_counts):
+            remaining = PlayerInventory()
+
+            for resource, discarded_count in zip(
+                resources,
+                discard_counts,
+            ):
+                kept = (
+                    inventory.count(resource)
+                    - discarded_count
+                )
+
+                if kept:
+                    remaining.add(
+                        resource,
+                        kept,
+                    )
+
+            return remaining
+
+        def score_remaining(remaining):
+            """
+            Mirror the resource-readiness component of
+            the ordinary search evaluator while adding
+            a bonus for already-affordable builds.
+            """
+            value = 0.0
+
+            for build_type in (
+                BuildType.CITY,
+                BuildType.SETTLEMENT,
+                BuildType.DEV_CARD,
+                BuildType.ROAD,
+            ):
+                if not build_available[
+                    build_type
+                ]:
+                    continue
+
+                cost = BUILD_COSTS[
+                    build_type
+                ]
+
+                total_required = sum(
+                    cost.values()
+                )
+
+                satisfied = sum(
+                    min(
+                        remaining.count(
+                            resource
+                        ),
+                        required,
+                    )
+                    for resource, required
+                    in cost.items()
+                )
+
+                weight = weights[
+                    build_type
+                ]
+
+                if total_required:
+                    value += (
+                        weight
+                        * satisfied
+                        / total_required
+                    )
+
+                if remaining.can_afford(
+                    build_type
+                ):
+                    value += weight
+
+            # Secondary flexibility reward:
+            # preserve diversity once immediate build
+            # readiness has been accounted for.
+            value += 0.05 * sum(
+                remaining.count(resource) > 0
+                for resource in resources
+            )
+
+            return value
+
+        candidates = []
+
+        held = tuple(
+            inventory.count(resource)
+            for resource in resources
+        )
+
+        def enumerate_counts(
+            index,
+            remaining_to_discard,
+            prefix,
+        ):
+            if index == len(resources):
+                if remaining_to_discard == 0:
+                    discard_counts = tuple(
+                        prefix
+                    )
+
+                    remaining = (
+                        remaining_inventory(
+                            discard_counts
+                        )
+                    )
+
+                    value = score_remaining(
+                        remaining
+                    )
+
+                    candidates.append(
+                        (
+                            value,
+                            discard_counts,
+                        )
+                    )
+
+                return
+
+            max_take = min(
+                held[index],
+                remaining_to_discard,
+            )
+
+            for take in range(
+                max_take + 1
+            ):
+                enumerate_counts(
+                    index + 1,
+                    remaining_to_discard
+                    - take,
+                    (
+                        *prefix,
+                        take,
+                    ),
+                )
+
+        enumerate_counts(
+            0,
+            count,
+            (),
+        )
+
+        if not candidates:
+            raise ValueError(
+                "No legal discard multiset found."
+            )
+
+        # Highest strategic value wins.
+        #
+        # On equal values, prefer the lexicographically
+        # smallest discard-count vector for completely
+        # deterministic behavior.
+        candidates.sort(
+            key=lambda item: (
+                -item[0],
+                item[1],
+            )
+        )
+
+        _, best_counts = candidates[0]
+
+        discarded = []
+
+        for resource, amount in zip(
+            resources,
+            best_counts,
+        ):
+            discarded.extend(
+                [resource] * amount
+            )
+
+        return discarded
+
+    def choose_robber_tile(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Choose a robber destination using only legally
+        observable information.
+
+        Search-v2 explicitly evaluates every destination
+        rather than delegating the choice to the inherited
+        Core-v1 policy.
+        """
+        if not self.search_robber_decisions:
+            return super().choose_robber_tile(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+
+        from catanlab.dice import production_weight
+
+        candidates = [
+            tile
+            for tile in board.tiles
+            if tile.id != board.robber_tile_id
+        ]
+
+        if not candidates:
+            return None
+
+        def buildings_on_tile(
+            candidate_player,
+            tile_id,
+        ):
+            settlements = sum(
+                1
+                for vertex_id
+                in candidate_player.settlements
+                if tile_id
+                in board.vertices[
+                    vertex_id
+                ].adjacent_tiles
+            )
+
+            cities = sum(
+                1
+                for vertex_id
+                in candidate_player.cities
+                if tile_id
+                in board.vertices[
+                    vertex_id
+                ].adjacent_tiles
+            )
+
+            return settlements, cities
+
+        def tile_score(tile):
+            probability_weight = (
+                production_weight(tile.number)
+                if tile.number is not None
+                else 0.0
+            )
+
+            opponent_denial = 0.0
+            self_denial = 0.0
+            steal_value = 0.0
+
+            for other in players:
+                settlements, cities = (
+                    buildings_on_tile(
+                        other,
+                        tile.id,
+                    )
+                )
+
+                production_units = (
+                    settlements
+                    + 2 * cities
+                )
+
+                if production_units <= 0:
+                    continue
+
+                blocked_value = (
+                    production_units
+                    * probability_weight
+                )
+
+                if (
+                    other.player_id
+                    == player.player_id
+                ):
+                    self_denial += blocked_value
+                    continue
+
+                threat = (
+                    1.0
+                    + 0.20
+                    * other.public_victory_points
+                )
+
+                opponent_denial += (
+                    blocked_value
+                    * threat
+                )
+
+                # Resource identities are private.
+                # Total hand size is public and is the
+                # only opponent inventory information used.
+                public_hand_size = (
+                    inventories[
+                        other.player_id
+                    ].total()
+                )
+
+                if public_hand_size > 0:
+                    steal_value = max(
+                        steal_value,
+                        1.0
+                        + 0.10
+                        * min(
+                            public_hand_size,
+                            7,
+                        )
+                        + 0.20
+                        * other.public_victory_points,
+                    )
+
+            value = (
+                opponent_denial
+                - 1.75 * self_denial
+                + 0.85 * steal_value
+            )
+
+            return (
+                value,
+                -tile.id,
+            )
+
+        return max(
+            candidates,
+            key=tile_score,
+        ).id
+
+    def choose_robber_victim(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        dev_deck=None,
+    ):
+        """
+        Choose a robber victim using only public VP and
+        public resource-card count.
+        """
+        if not self.search_robber_decisions:
+            return super().choose_robber_victim(
+                board,
+                players,
+                inventories,
+                player,
+                bank=bank,
+                dev_deck=dev_deck,
+            )
+
+        from catanlab.devcards import (
+            players_adjacent_to_tile,
+        )
+
+        if board.robber_tile_id is None:
+            return None
+
+        adjacent = players_adjacent_to_tile(
+            board,
+            players,
+            board.robber_tile_id,
+            exclude_player_id=player.player_id,
+        )
+
+        eligible = [
+            victim_id
+            for victim_id in adjacent
+            if inventories[victim_id].total() > 0
+        ]
+
+        if not eligible:
+            return None
+
+        return max(
+            eligible,
+            key=lambda victim_id: (
+                players[
+                    victim_id
+                ].public_victory_points,
+                min(
+                    inventories[
+                        victim_id
+                    ].total(),
+                    7,
+                ),
+                -victim_id,
+            ),
+        )
+
+    def choose_monopoly_resource(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        suggested_resource=None,
+    ):
+        """
+        Consume a Monopoly resource selected by Search v2.
+
+        Fall back to the normal TurnAgent contract when no
+        search-owned choice is pending.
+        """
+        if self._pending_monopoly_resource is not None:
+            resource = self._pending_monopoly_resource
+            self._pending_monopoly_resource = None
+            return resource
+
+        return super().choose_monopoly_resource(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_resource=suggested_resource,
+        )
+
+    def choose_year_of_plenty_resources(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        bank=None,
+        suggested_resources=None,
+    ):
+        """
+        Consume a Year of Plenty pair selected by Search v2.
+        """
+        if (
+            self._pending_year_of_plenty_resources
+            is not None
+        ):
+            resources = (
+                self._pending_year_of_plenty_resources
+            )
+            self._pending_year_of_plenty_resources = None
+            return resources
+
+        return super().choose_year_of_plenty_resources(
+            board,
+            players,
+            inventories,
+            player,
+            bank=bank,
+            suggested_resources=suggested_resources,
+        )
+
+    def choose_road_building_edges(
+        self,
+        board,
+        players,
+        inventories,
+        player,
+        suggested_edges=None,
+    ):
+        """
+        Consume Road Building edges selected by Search v2.
+        """
+        if self._pending_road_building_edges is not None:
+            edges = self._pending_road_building_edges
+            self._pending_road_building_edges = None
+            return edges
+
+        return super().choose_road_building_edges(
+            board,
+            players,
+            inventories,
+            player,
+            suggested_edges=suggested_edges,
+        )
+
     def choose_dev_card_play(
         self,
         board,
@@ -577,6 +1801,10 @@ class OneStepLookaheadAgent(
         decisions while preserving the established
         heuristic policy for all other cards.
         """
+        self._pending_monopoly_resource = None
+        self._pending_year_of_plenty_resources = None
+        self._pending_road_building_edges = None
+
         baseline = super().choose_dev_card_play(
             board,
             players,
@@ -732,10 +1960,13 @@ class OneStepLookaheadAgent(
                     utility=hold_value,
                 )
 
+            self._pending_monopoly_resource = (
+                best_resource
+            )
+
             return DevCardDecision(
                 card=DevCardType.MONOPOLY,
                 utility=best_play_value,
-                resource=best_resource,
             )
 
         # ------------------------------------------------
@@ -870,13 +2101,14 @@ class OneStepLookaheadAgent(
                     utility=hold_value,
                 )
 
+            self._pending_year_of_plenty_resources = (
+                resource_a,
+                resource_b,
+            )
+
             return DevCardDecision(
                 card=DevCardType.YEAR_OF_PLENTY,
                 utility=best_play_value,
-                resources=(
-                    resource_a,
-                    resource_b,
-                ),
             )
 
         # ------------------------------------------------
@@ -1064,10 +2296,13 @@ class OneStepLookaheadAgent(
                 utility=hold_value,
             )
 
+        self._pending_road_building_edges = (
+            best_edges
+        )
+
         return DevCardDecision(
             card=DevCardType.ROAD_BUILDING,
             utility=best_play_value,
-            road_edges=best_edges,
         )
 
     def choose_action(
